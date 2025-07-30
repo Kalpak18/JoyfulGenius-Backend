@@ -1,5 +1,6 @@
 # Node modules (never push)
 node_modules/
+client/dist/node_modules/
 
 # Environment variables
 .env
