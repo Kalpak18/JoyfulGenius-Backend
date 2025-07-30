@@ -1,0 +1,15 @@
+# Node modules (never push)
+node_modules/
+
+# Environment variables
+.env
+
+# Logs
+*.log
+
+# Uploaded files
+uploads/
+
+# OS files
+.DS_Store
+Thumbs.db
