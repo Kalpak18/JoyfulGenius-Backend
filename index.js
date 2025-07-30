@@ -37,7 +37,7 @@ const frontendPath = path.join(currentDir, "dist");
 app.use(express.static(frontendPath));
 
 
-app.use(cors({ origin: 'http://localhost:5173' || 'https://yourfrontenddomain.com', credentials: true }));
+app.use(cors({ origin: ['http://localhost:5173' , 'https://yourfrontenddomain.com'], credentials: true }));
 app.use(express.json({ verify: (req, res, buf) => { req.rawBody = buf } }));
 
 // Routes
