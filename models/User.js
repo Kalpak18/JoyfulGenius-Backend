@@ -3,12 +3,12 @@ import bcrypt from 'bcryptjs';
 
 const userSchema = new mongoose.Schema(
   {
-    name: { type: String, required: true },
+    f_name: { type: String, required: true },
+    last_name:{ type: String, required: true },
     email: { type: String, required: true, unique: true },
     whatsappNo: { type: String, required: true },
-    taluka: { type: String, required: true },
+    // taluka: { type: String, required: true },
     district: { type: String, required: true },
-    state: { type: String, required: true },
     password: { type: String, required: true },
     verified: { type: Boolean, default: false },
     isPaid: { type: Boolean, default: false },

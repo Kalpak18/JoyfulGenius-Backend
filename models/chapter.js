@@ -1,8 +1,16 @@
-import mongoose from 'mongoose';
+import mongoose from "mongoose";
 
 const chapterSchema = new mongoose.Schema({
-  name: { type: String, required: true },
-  subject: { type: mongoose.Schema.Types.ObjectId, ref: 'Subject', required: true }
+  subject: { type: String, required: true },
+  title: { type: String, required: true },
+  language: { type: String, required: true },
+  youtubeCode: { type: String, default: "" },
+  freetestCode: { type: String, default: "" },
+  mastertestCode: { type: String, default: "" },
+}, {
+  timestamps: true,
 });
 
-export default mongoose.model('Chapter', chapterSchema);
+const Chapter = mongoose.model("Chapter", chapterSchema);
+
+export default Chapter;

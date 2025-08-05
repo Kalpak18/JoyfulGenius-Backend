@@ -29,8 +29,12 @@ export const getPaidUsers = async (req, res) => {
   try {
     console.log("Authenticated admin:", req.admin); // ✅ check if token is valid
     const users = await User.find({ verified: true })
-      .select("name whatsappNo taluka username isPaid");
-    res.status(200).json(users);
+      .select("f_name last_name whatsappNo district username isPaid");
+      const usersWithFullName = users.map(user => ({
+      ...user._doc,
+      name: `${user.f_name} ${user.last_name}`.trim()
+    }));
+    res.status(200).json(usersWithFullName);
   } catch (err) {
     console.error("❌ Error in getPaidUsers:", err);
     res.status(500).json({ message: "Error fetching paid users", error: err });
@@ -41,28 +45,72 @@ export const getPaidUsers = async (req, res) => {
 // ✅ Fetch all verified users — NEW
 export const getAllUsers = async (req, res) => {
   try {
-    const users = await User.find({ verified: true }).select("name whatsappNo taluka username isPaid");
-    res.status(200).json(users);
+    const users = await User.find({ verified: true }).select("f_name last_name whatsappNo district username isPaid");
+
+    const usersWithFullName = users.map(user => ({
+      ...user._doc,
+      name: `${user.f_name} ${user.last_name}`.trim()
+    }));
+
+    res.status(200).json(usersWithFullName);
   } catch (err) {
     res.status(500).json({ message: "Error fetching users", error: err });
   }
 };
 
+// export const updateUser = async (req, res) => {
+//   const { id } = req.params;
+
+//   try {
+//     const user = await User.findByIdAndUpdate(id, req.body, { new: true });
+//     if (!user) return res.status(404).json({ message: "User not found" });
+
+//     const userWithFullName = {
+//       ...user._doc,
+//       name: `${user.f_name} ${user.last_name}`.trim()
+//     };
+
+//     res.status(200).json({ message: "User updated successfully", user:userWithFullName });
+//   } catch (err) {
+//     console.error("Update error:", err);
+//     res.status(500).json({ message: "Server error during update" });
+//   }
+// };
+
+// DELETE user
+
 export const updateUser = async (req, res) => {
   const { id } = req.params;
+  const { f_name, last_name, whatsappNo, district, username } = req.body;
 
   try {
-    const user = await User.findByIdAndUpdate(id, req.body, { new: true });
+    const user = await User.findByIdAndUpdate(
+      id,
+      { 
+        f_name, 
+        last_name: last_name || '', 
+        whatsappNo, 
+        district, 
+        username 
+      },
+      { new: true }
+    );
+
     if (!user) return res.status(404).json({ message: "User not found" });
 
-    res.status(200).json({ message: "User updated successfully", user });
+    res.status(200).json({
+      message: "User updated successfully",
+      user: {
+        ...user._doc,
+        name: `${user.f_name} ${user.last_name}`.trim()
+      }
+    });
   } catch (err) {
     console.error("Update error:", err);
     res.status(500).json({ message: "Server error during update" });
   }
 };
 
-// DELETE user
 export const deleteUser = async (req, res) => {
   const { id } = req.params;
 
@@ -140,18 +188,18 @@ export const getAdminStats = async (req, res) => {
       { $unwind: "$userDetails" },
       {
         $project: {
-          name: "$userDetails.name",
-          taluka: "$userDetails.taluka",
+          name: { $concat: ["$userDetails.f_name", " ", "$userDetails.last_name"] },
+          district: "$userDetails.district",
           avgScore: { $round: [{ $multiply: ["$avgScore", 100] }, 1] }, // % rounded to 1 decimal
         },
       },
     ]);
 
-    // ✅ Taluka-wise user distribution
-    const talukaStats = await User.aggregate([
+    // ✅ district-wise user distribution
+    const districtStats = await User.aggregate([
       {
         $group: {
-          _id: "$taluka",
+          _id: "$district",
           count: { $sum: 1 },
         },
       },
@@ -166,7 +214,7 @@ export const getAdminStats = async (req, res) => {
       totalTests,
       subjectStats,
       topScorers,
-      talukaStats,
+      districtStats,
     });
 
   } catch (err) {

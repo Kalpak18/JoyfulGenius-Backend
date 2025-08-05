@@ -1,22 +1,40 @@
-import Chapter from '../models/chapter.js';
+import Chapter from "../models/chapter.js";
 
-export const createChapter = async (req, res) => {
+// POST: Create or update chapter
+export const createOrUpdateChapter = async (req, res) => {
   try {
-    const chapter = await Chapter.create({
-      name: req.body.name,
-      subject: req.body.subjectId
-    });
-    res.status(201).json(chapter);
-  } catch (err) {
-    res.status(400).json({ error: err.message });
+    const { subject, title, language, youtubeCode, freetestCode, mastertestCode } = req.body;
+
+    const chapter = await Chapter.findOneAndUpdate(
+      { subject, title, language },
+      { youtubeCode, freetestCode, mastertestCode },
+      { new: true, upsert: true }
+    );
+
+    res.status(200).json({ message: "Chapter saved", chapter });
+  } catch (error) {
+    console.error("Error saving chapter:", error);
+    res.status(500).json({ message: "Server error" });
   }
 };
 
-export const getChaptersBySubject = async (req, res) => {
+// GET: All chapters (optional)
+export const getAllChapters = async (req, res) => {
   try {
-    const chapters = await Chapter.find({ subject: req.params.subjectId });
-    res.json(chapters);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
+    const chapters = await Chapter.find().sort({ subject: 1, title: 1 });
+    res.status(200).json(chapters);
+  } catch (error) {
+    res.status(500).json({ message: "Error fetching chapters" });
+  }
+};
+
+// DELETE: Delete a chapter
+export const deleteChapter = async (req, res) => {
+  try {
+    const { id } = req.params;
+    await Chapter.findByIdAndDelete(id);
+    res.status(200).json({ message: "Chapter deleted" });
+  } catch (error) {
+    res.status(500).json({ message: "Error deleting chapter" });
   }
 };

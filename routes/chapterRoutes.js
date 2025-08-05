@@ -1,9 +1,19 @@
-import express from 'express';
-import { createChapter, getChaptersBySubject } from '../controllers/chapterController.js';
+import express from "express";
+import {
+  createOrUpdateChapter,
+  getAllChapters,
+  deleteChapter,
+} from "../controllers/chapterController.js";
 
 const router = express.Router();
 
-router.post('/', createChapter);
-router.get('/:subjectId', getChaptersBySubject);
+// POST: Add or update
+router.post("/", createOrUpdateChapter);
+
+// GET: All chapters
+router.get("/", getAllChapters);
+
+// DELETE: Delete by ID
+router.delete("/:id", deleteChapter);
 
 export default router;

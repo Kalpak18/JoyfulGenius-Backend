@@ -3,6 +3,7 @@ import User from '../models/User.js';
 import { sendOtp as sendTwilioOtp, verifyOtp as verifyTwilioOtp } from '../Utils/sendOtp.js';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
+import mongoose from 'mongoose';
 
 export const registerUser = async (req, res) => {
   const { whatsappNo } = req.body;
@@ -42,8 +43,12 @@ export const verifyUserOtp = async (req, res) => {
 
       // Create new user — password will be hashed by Mongoose schema
       const newUser = new User({
-        ...user,
+        f_name: user.f_name,
+        last_name: user.last_name || '',
         whatsappNo: rawNumber,
+        email: user.email,
+        password: user.password, // Will be hashed by pre-save hook
+        district: user.district,
         verified: true,
       });
 
@@ -56,7 +61,10 @@ export const verifyUserOtp = async (req, res) => {
       res.status(201).json({
         success: true,
         message: 'User registered & OTP verified',
-        user: newUser,
+         user: {
+          ...newUser._doc,
+          name: `${newUser.f_name} ${newUser.last_name}`.trim()
+        },
         token,
       });
     } else {
@@ -144,7 +152,7 @@ export const loginUser = async (req, res) => {
   message: 'Login successful',
   token,
   user: {
-    name: user.name,
+    name: `${user.f_name} ${user.last_name}` .trim(),
     email: user.email,
     isPaid: user.isPaid, // ✅ important
     username: user.username,
@@ -190,63 +198,127 @@ export const markPaid = async (req, res) => {
     if (!user.username) {
       const paidCount = await User.countDocuments({ isPaid: true });
       const serialNumber = paidCount + 1;
-      const formattedName = user.name.toLowerCase().replace(/\s+/g, '');
-      const formattedTaluka = user.taluka.toLowerCase().replace(/\s+/g, '');
-      user.username = `${serialNumber}.${formattedName}.${formattedTaluka}`;
+      const formattedFirstName = user.f_name.toLowerCase().replace(/\s+/g, '');
+      const formattedLastName = user.last_name.toLowerCase().replace(/\s+/g, '');
+      const formattedDistrict = user.district.toLowerCase().replace(/\s+/g, '');
+      user.username = `${serialNumber}.${formattedFirstName}${formattedLastName}.${formattedDistrict}`;
     }
 
     user.markModified('isPaid');
     user.markModified('username');
     await user.save();
 
-    res.status(200).json({ message: "Payment confirmed", username: user.username });
+    res.status(200).json({ message: "Payment confirmed", username: user.username, 
+      user: {
+        ...user._doc,
+        name: `${user.f_name} ${user.last_name}`.trim()
+      }
+    });
   } catch (err) {
     console.error("❌ Mark Paid failed:", err); // log full error
     res.status(500).json({ error: err.message });
   }
 };
 
+// export const togglePaidStatus = async (req, res) => {
+//   const { userId } = req.params;
+
+//   try {
+//     const user = await User.findById(userId);
+//     if (!user) return res.status(404).json({ message: "User not found" });
+
+//     // Toggle isPaid
+//     user.isPaid = !user.isPaid;
+
+//     // If marking as paid and no username, generate one
+//     if (user.isPaid && !user.username) {
+//       const paidCount = await User.countDocuments({ isPaid: true });
+//       const serialNumber = paidCount + 1;
+//       const formattedName = user.f_name.toLowerCase().replace(/\s+/g, '');
+//       const formattedTaluka = user.taluka.toLowerCase().replace(/\s+/g, '');
+
+//       user.username = `${serialNumber}.${formattedName}.${formattedTaluka}`;
+//     }
+//     if (!user.isPaid) {
+//       user.username = undefined;
+//     }
+//     await user.save();
+
+//     res.status(200).json({
+//       message: `User marked as ${user.isPaid ? 'Paid' : 'Unpaid'}`,
+//       isPaid: user.isPaid,
+//       username: user.username || null,
+//       user: {
+//         ...user._doc,
+//         name: `${user.f_name} ${user.last_name}`.trim()
+//       }
+//     });
+//   } catch (error) {
+//     console.error("Toggle Paid Status Error:", error);
+//     res.status(500).json({ message: "Server error while toggling paid status" });
+//   }
+// };
+
+
 export const togglePaidStatus = async (req, res) => {
   const { userId } = req.params;
 
   try {
-    const user = await User.findById(userId);
-    if (!user) return res.status(404).json({ message: "User not found" });
+    // Validate userId
+    if (!mongoose.Types.ObjectId.isValid(userId)) {
+      return res.status(400).json({ message: "Invalid user ID" });
+    }
 
-    // Toggle isPaid
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    // Toggle the paid status
     user.isPaid = !user.isPaid;
 
-    // If marking as paid and no username, generate one
+    // Generate username if being marked as paid
     if (user.isPaid && !user.username) {
       const paidCount = await User.countDocuments({ isPaid: true });
-      const serialNumber = paidCount + 1;
-      const formattedName = user.name.toLowerCase().replace(/\s+/g, '');
-      const formattedTaluka = user.taluka.toLowerCase().replace(/\s+/g, '');
-
-      user.username = `${serialNumber}.${formattedName}.${formattedTaluka}`;
+      const serialNumber = paidCount + 1 ;
+      const formattedFirstName = user.f_name.toLowerCase().replace(/[^a-z0-9]/g, '');
+      const formattedLastName = user.last_name.toLowerCase().replace(/[^a-z0-9]/g, '');
+      const formattedDistrict = user.district.toLowerCase().replace(/[^a-z0-9]/g, '');
+      user.username = `${serialNumber}.${formattedFirstName}${formattedLastName}.${formattedDistrict}`;
     }
-    if (!user.isPaid) {
+
+    // Clear username if being marked as unpaid
+    if (!user.isPaid && user.username) {
       user.username = undefined;
     }
+
     await user.save();
 
     res.status(200).json({
-      message: `User marked as ${user.isPaid ? 'Paid' : 'Unpaid'}`,
+      success: true,
       isPaid: user.isPaid,
       username: user.username || null,
+      message: `User marked as ${user.isPaid ? 'Paid' : 'Unpaid'}`
     });
+
   } catch (error) {
     console.error("Toggle Paid Status Error:", error);
-    res.status(500).json({ message: "Server error while toggling paid status" });
+    res.status(500).json({ 
+      success: false,
+      message: "Server error while toggling paid status",
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
   }
 };
-
 
 export const getUserProfile = async (req, res) => {
   try {
     const user = await User.findById(req.user.id).select("-password");
     if (!user) return res.status(404).json({ message: "User not found" });
-    res.status(200).json(user);
+     res.status(200).json({
+      ...user._doc,
+      name: `${user.f_name} ${user.last_name}`.trim()
+    });
   } catch (err) {
     res.status(500).json({ message: "Server error" });
   }
