@@ -1,9 +1,57 @@
 // controllers/usercontroller.js
 import User from '../models/User.js';
+import crypto from 'crypto';
 import { sendOtp as sendTwilioOtp, verifyOtp as verifyTwilioOtp } from '../Utils/sendOtp.js';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import mongoose from 'mongoose';
+import sendEmail from '../Utils/sendEmail.js'; // helper to send email
+
+// Forgot Password Controller
+export const forgotPassword = async (req, res) => {
+  const { email } = req.body;
+
+  if (!email) return res.status(400).json({ message: 'Email is required' });
+
+  const user = await User.findOne({ email });
+  if (!user) return res.status(404).json({ message: 'User not found' });
+
+  const token = crypto.randomBytes(32).toString('hex');
+  user.resetToken = token;
+  user.resetTokenExpire = Date.now() + 3600000; // 1 hour
+  await user.save();
+
+  const resetUrl = `${process.env.FRONTEND_URL}/reset-password/${token}`;
+  const message = `Reset your password by clicking here: ${resetUrl}`;
+
+  try {
+    await sendEmail(user.email, 'Password Reset', message);
+    res.status(200).json({ message: 'Password reset link sent to email' });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Failed to send email' });
+  }
+};
+
+// Reset Password
+export const resetPassword = async (req, res) => {
+  const { token } = req.params;
+  const { password } = req.body;
+
+  const user = await User.findOne({
+    resetToken: token,
+    resetTokenExpire: { $gt: Date.now() },
+  });
+
+  if (!user) return res.status(400).json({ message: 'Invalid or expired token' });
+
+  user.password = password;
+  user.resetToken = undefined;
+  user.resetTokenExpire = undefined;
+  await user.save();
+
+  res.status(200).json({ message: 'Password reset successful' });
+};
 
 export const registerUser = async (req, res) => {
   const { whatsappNo } = req.body;
@@ -76,115 +124,95 @@ export const verifyUserOtp = async (req, res) => {
   }
 };
 
-// export const verifyUserOtp = async (req, res) => {
-//   const { code, user } = req.body;
 
-//   if (!code || !user || !user.whatsappNo) {
-//     return res.status(400).json({ message: "Missing required fields" });
-//   }
+// export const loginUser = async (req, res) => {
+//   const { email, password } = req.body;
 
 //   try {
-//     const formatted = user.whatsappNo.startsWith('+91') ? user.whatsappNo : `+91${user.whatsappNo}`;
-//     const result = await verifyTwilioOtp(formatted, code);
+//     console.log("🛠️ Login attempt for:", email);
+//     const user = await User.findOne({ email });
 
-//     console.log("Twilio Verify Result:", result);
-
-//     if (result.status !== 'approved') {
-//       return res.status(400).json({ message: 'Invalid OTP' });
+//     if (!user) {
+//       console.log("❌ No user found");
+//       return res.status(400).json({ message: 'User not found' });
 //     }
 
-//     // Check if already 3 users registered with this number
-//     const count = await User.countDocuments({ whatsappNo: user.whatsappNo });
-//     if (count >= 3) {
-//       return res.status(400).json({ message: 'Only 3 accounts allowed per mobile number' });
+//     const isMatch = await bcrypt.compare(password, user.password);
+//     // console.log("✅ Password match:", isMatch);
+
+//     if (!isMatch) {
+//       return res.status(401).json({ message: 'Invalid credentials' });
 //     }
 
-//     // Hash the password before saving
-//     const hashedPassword = await bcrypt.hash(user.password, 10);
-
-//     const newUser = new User({
-//       ...user,
-//       password: hashedPassword,
-//       verified: true,
-//     });
-
-//     await newUser.save();
-
-//     const token = jwt.sign({ id: newUser._id }, process.env.JWT_SECRET, {
+//     const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, {
 //       expiresIn: '7d',
 //     });
 
-//     res.status(201).json({
-//       success: true,
-//       message: 'User registered & OTP verified',
-//       user: newUser,
-//       token,
-//     });
+//     return res.status(200).json({
+//   message: 'Login successful',
+//   token,
+//   user: {
+//     name: `${user.f_name} ${user.last_name}` .trim(),
+//     email: user.email,
+//     isPaid: user.isPaid, // ✅ important
+//     username: user.username,
+//   },
+// });
+
 //   } catch (error) {
-//     console.error("OTP verify error:", error);
-//     res.status(500).json({ message: 'Server error during OTP verification' });
+//     console.error('❌ Login error:', error);
+//     return res.status(500).json({ message: 'Server error during login' });
 //   }
 // };
+
 export const loginUser = async (req, res) => {
-  const { email, password } = req.body;
+  const { identifier, password } = req.body;
 
   try {
-    console.log("🛠️ Login attempt for:", email);
-    const user = await User.findOne({ email });
+    const users = await User.find({
+      $or: [{ email: identifier }, { whatsappNo: identifier }]
+    });
 
-    if (!user) {
+    if (!users || users.length === 0) {
       console.log("❌ No user found");
       return res.status(400).json({ message: 'User not found' });
     }
 
-    const isMatch = await bcrypt.compare(password, user.password);
-    // console.log("✅ Password match:", isMatch);
+    // Compare password against each matched user
+    let matchedUser = null;
+    for (const user of users) {
+      const isMatch = await bcrypt.compare(password, user.password);
+      if (isMatch) {
+        matchedUser = user;
+        break;
+      }
+    }
 
-    if (!isMatch) {
+    if (!matchedUser) {
       return res.status(401).json({ message: 'Invalid credentials' });
     }
 
-    const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, {
+    const token = jwt.sign({ id: matchedUser._id }, process.env.JWT_SECRET, {
       expiresIn: '7d',
     });
 
     return res.status(200).json({
-  message: 'Login successful',
-  token,
-  user: {
-    name: `${user.f_name} ${user.last_name}` .trim(),
-    email: user.email,
-    isPaid: user.isPaid, // ✅ important
-    username: user.username,
-  },
-});
+      message: 'Login successful',
+      token,
+      user: {
+        name: `${matchedUser.f_name} ${matchedUser.last_name}`.trim(),
+        whatsappNo: matchedUser.whatsappNo,
+        email: matchedUser.email,
+        isPaid: matchedUser.isPaid,
+        username: matchedUser.username,
+      },
+    });
 
   } catch (error) {
     console.error('❌ Login error:', error);
     return res.status(500).json({ message: 'Server error during login' });
   }
 };
-
-// export const loginUser = async (req, res) => {
-//   const { email, password } = req.body;
-
-//   try {
-//     const user = await User.findOne({ email });
-//     if (!user) return res.status(400).json({ message: 'User not found' });
-
-//     const isMatch = await bcrypt.compare(password, user.password);
-//     if (!isMatch) return res.status(401).json({ message: 'Invalid credentials' });
-
-//     const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, {
-//       expiresIn: '7d',
-//     });
-
-//     res.status(200).json({ message: 'Login successful', token, user });
-//   } catch (error) {
-//     console.error('Login error:', error);
-//     res.status(500).json({ message: 'Server error during login' });
-//   }
-// };
 
 export const markPaid = async (req, res) => {
   const { userId } = req.body;

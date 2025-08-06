@@ -13,6 +13,8 @@ const userSchema = new mongoose.Schema(
     verified: { type: Boolean, default: false },
     isPaid: { type: Boolean, default: false },
     username: { type: String }, // ✅ this was missing
+    resetToken: String,
+    resetTokenExpire: Date,
   },
   { timestamps: true }
 );

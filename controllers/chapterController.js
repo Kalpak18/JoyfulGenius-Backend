@@ -19,14 +19,32 @@ export const createOrUpdateChapter = async (req, res) => {
 };
 
 // GET: All chapters (optional)
+// export const getAllChapters = async (req, res) => {
+//   try {
+//     const chapters = await Chapter.find().sort({ subject: 1, title: 1 });
+//     res.status(200).json(chapters);
+//   } catch (error) {
+//     res.status(500).json({ message: "Error fetching chapters" });
+//   }
+// };
+
 export const getAllChapters = async (req, res) => {
   try {
-    const chapters = await Chapter.find().sort({ subject: 1, title: 1 });
+    const { subject } = req.query;
+
+    const filter = subject
+      ? { subject: new RegExp(`^${subject}$`, 'i') } // Case-insensitive match
+      : {};
+
+    const chapters = await Chapter.find(filter).sort({ subject: 1, title: 1 });
+
     res.status(200).json(chapters);
   } catch (error) {
+    console.error("Error fetching chapters:", error);
     res.status(500).json({ message: "Error fetching chapters" });
   }
 };
+
 
 // DELETE: Delete a chapter
 export const deleteChapter = async (req, res) => {
