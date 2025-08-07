@@ -7,7 +7,11 @@ import {
   togglePaidStatus,
   getUserProfile,
   forgotPassword,
-  resetPassword
+  resetPassword,
+  forgotPasswordMobile,
+  verifyResetOtp,
+  updateEmail,
+  deleteAccount
 } from '../controllers/usercontroller.js';
 import { verifyAdmin } from '../middleware/auth.js';
 import { verifyUser } from '../middleware/auth.js';
@@ -22,5 +26,13 @@ router.patch("/toggle-paid/:userId", verifyAdmin, togglePaidStatus);
 router.get("/profile", verifyUser, getUserProfile);
 router.post('/forgot-password', forgotPassword);
 router.post('/reset-password/:token', resetPassword);
+router.post('/forgot-password-mobile', forgotPasswordMobile);
+router.post('/verify-reset-otp', verifyResetOtp);
+
+router.patch("/update-email", verifyUser, updateEmail);
+
+// ✅ Delete Account
+router.delete("/delete-account", verifyUser, deleteAccount);
+
 
 export default router;

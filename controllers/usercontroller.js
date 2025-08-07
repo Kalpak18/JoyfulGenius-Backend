@@ -7,7 +7,80 @@ import jwt from 'jsonwebtoken';
 import mongoose from 'mongoose';
 import sendEmail from '../Utils/sendEmail.js'; // helper to send email
 
+export const forgotPasswordMobile = async (req, res) => {
+  const { whatsappNumber } = req.body;
+
+  if (!whatsappNumber) {
+    return res.status(400).json({ message: 'WhatsApp number is required' });
+  }
+
+  const rawNumber = whatsappNumber.replace(/^\+91/, '');
+  const user = await User.findOne({ whatsappNo: rawNumber });
+
+  if (!user) return res.status(404).json({ message: 'User not found' });
+
+  const formatted = whatsappNumber.startsWith('+91') ? whatsappNumber : `+91${whatsappNumber}`;
+  try {
+    await sendTwilioOtp(formatted);
+    res.status(200).json({ message: 'OTP sent successfully' });
+  } catch (err) {
+    console.error("OTP send error:", err);
+    res.status(500).json({ message: 'Failed to send OTP' });
+  }
+};
+
+export const verifyResetOtp = async (req, res) => {
+  const { whatsappNumber, code } = req.body;
+
+  const formatted = whatsappNumber.startsWith('+91') ? whatsappNumber : `+91${whatsappNumber}`;
+  const result = await verifyTwilioOtp(formatted, code);
+
+  if (result.status !== 'approved') {
+    return res.status(400).json({ message: 'Invalid OTP' });
+  }
+
+  const rawNumber = whatsappNumber.replace(/^\+91/, '');
+  const user = await User.findOne({ whatsappNo: rawNumber });
+
+  if (!user) return res.status(404).json({ message: 'User not found' });
+
+  const token = crypto.randomBytes(32).toString('hex');
+  user.resetToken = token;
+  user.resetTokenExpire = Date.now() + 3600000; // 1 hour
+  await user.save();
+
+  return res.status(200).json({ message: "OTP verified", resetToken: token });
+};
+
+
 // Forgot Password Controller
+// export const forgotPassword = async (req, res) => {
+//   const { email } = req.body;
+
+//   if (!email) return res.status(400).json({ message: 'Email is required' });
+
+//   const user = await User.findOne({ email });
+//   if (!user) return res.status(404).json({ message: 'User not found' });
+
+//   const token = crypto.randomBytes(32).toString('hex');
+//   user.resetToken = token;
+//   user.resetTokenExpire = Date.now() + 3600000; // 1 hour
+//   await user.save();
+
+//   const resetUrl = `${process.env.FRONTEND_URL}/reset-password/${token}`;
+//   const message = `Reset your password by clicking here: ${resetUrl}`;
+
+//   try {
+//     await sendEmail(user.email, 'Password Reset', message);
+//     res.status(200).json({ message: 'Password reset link sent to email' });
+//   } catch (error) {
+//     console.error(error);
+//     res.status(500).json({ message: 'Failed to send email' });
+//   }
+// };
+
+// Reset Password
+
 export const forgotPassword = async (req, res) => {
   const { email } = req.body;
 
@@ -33,7 +106,7 @@ export const forgotPassword = async (req, res) => {
   }
 };
 
-// Reset Password
+
 export const resetPassword = async (req, res) => {
   const { token } = req.params;
   const { password } = req.body;
@@ -64,10 +137,16 @@ export const registerUser = async (req, res) => {
     const cleanMobile = whatsappNo.replace(/^\+91/, '');
     const formattedNumber = whatsappNo.startsWith('+91') ? whatsappNo : `+91${whatsappNo}`;
 
-    const existingUsers = await User.countDocuments({ whatsappNo: cleanMobile });
-    if (existingUsers >= 3) {
-      return res.status(400).json({ message: 'Only 3 accounts allowed per mobile number' });
-    }
+    // const existingUsers = await User.countDocuments({ whatsappNo: cleanMobile });
+    // if (existingUsers >= 3) {
+    //   return res.status(400).json({ message: 'Only 3 accounts allowed per mobile number' });
+    // }
+
+    const existing = await User.findOne({ whatsappNo: cleanMobile });
+if (existing) {
+  return res.status(400).json({ message: 'This mobile number is already registered' });
+}
+
 
     await sendTwilioOtp(formattedNumber);
     res.status(200).json({ message: 'OTP sent successfully', whatsappNo: cleanMobile });
@@ -94,7 +173,7 @@ export const verifyUserOtp = async (req, res) => {
         f_name: user.f_name,
         last_name: user.last_name || '',
         whatsappNo: rawNumber,
-        email: user.email,
+        email: user.email || undefined,
         password: user.password, // Will be hashed by pre-save hook
         district: user.district,
         verified: true,
@@ -349,5 +428,38 @@ export const getUserProfile = async (req, res) => {
     });
   } catch (err) {
     res.status(500).json({ message: "Server error" });
+  }
+};
+
+// ✅ Update Email
+export const updateEmail = async (req, res) => {
+  const { email } = req.body;
+
+  if (!email) {
+    return res.status(400).json({ message: "Email is required" });
+  }
+
+  try {
+    const user = await User.findById(req.user.id);
+    if (!user) return res.status(404).json({ message: "User not found" });
+
+    user.email = email;
+    await user.save();
+
+    res.status(200).json({ message: "Email updated successfully" });
+  } catch (err) {
+    console.error("❌ Email update error:", err);
+    res.status(500).json({ message: "Server error while updating email" });
+  }
+};
+
+// ✅ Delete Account
+export const deleteAccount = async (req, res) => {
+  try {
+    await User.findByIdAndDelete(req.user.id);
+    res.status(200).json({ message: "Account deleted successfully" });
+  } catch (err) {
+    console.error("❌ Delete account error:", err);
+    res.status(500).json({ message: "Server error while deleting account" });
   }
 };
