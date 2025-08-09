@@ -601,3 +601,15 @@ export const deleteAccount = async (req, res) => {
     res.status(500).json({ message: "Server error while deleting account" });
   }
 };
+
+export const getCurrentUser = async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id).select("isPaid");
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+    res.json({ isPaid: user.isPaid });
+  } catch (error) {
+    res.status(500).json({ message: "Server error" });
+  }
+};

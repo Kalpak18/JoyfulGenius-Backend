@@ -11,10 +11,13 @@ import {
   forgotPasswordMobile,
   verifyResetOtp,
   updateEmail,
-  deleteAccount
+  deleteAccount,
+  getCurrentUser
 } from '../controllers/usercontroller.js';
 import { verifyAdmin } from '../middleware/auth.js';
 import { verifyUser } from '../middleware/auth.js';
+import { protect } from '../controllers/authController.js';
+
 
 const router = express.Router();
 router.post('/register', registerUser);
@@ -33,6 +36,11 @@ router.patch("/update-email", verifyUser, updateEmail);
 
 // ✅ Delete Account
 router.delete("/delete-account", verifyUser, deleteAccount);
+
+
+
+
+router.get("/me", protect, getCurrentUser);
 
 
 export default router;

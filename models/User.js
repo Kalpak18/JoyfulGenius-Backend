@@ -54,7 +54,7 @@ const userSchema = new mongoose.Schema(
     whatsappNo: { type: String, required: true, unique: true },
     district: { type: String, required: true },
     password: { type: String, required: true },
-    verified: { type: Boolean, default: false },
+    verified: { type: Boolean, default: true },
     isPaid: { type: Boolean, default: false },
     username: { type: String },
     resetToken: String,
