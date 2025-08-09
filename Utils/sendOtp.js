@@ -16,7 +16,7 @@ export const sendOtp = async (phone, message = null) => {
       });
     } else {
       // Default OTP flow
-      return client.verify.v2
+      await client.verify.v2
         .services(process.env.TWILIO_SERVICE_SID)
         .verifications.create({ to: phone, channel: 'sms' });
     }

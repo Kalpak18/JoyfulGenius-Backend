@@ -2,14 +2,14 @@ import User from '../models/User.js';
 import { sendOtp as sendTwilioOtp, verifyOtp as verifyTwilioOtp } from '../Utils/sendOtp.js';
 
 export const sendOtp = async (req, res) => {
-  const { whatsappNumber } = req.body;
+  const { whatsappNo } = req.body;
 
   if (!whatsappNumber) {
     return res.status(400).json({ error: 'WhatsApp number is required' });
   }
 
   try {
-    const formatted = whatsappNumber.startsWith('+91') ? whatsappNumber : `+91${whatsappNumber}`;
+    const formatted = whatsappNumber.startsWith('+91') ? whatsappNo : `+91${whatsappNumber}`;
     await sendTwilioOtp(formatted);
     res.status(200).json({ success: true, message: 'OTP sent successfully' });
   } catch (err) {
@@ -22,7 +22,7 @@ export const verifyOtp = async (req, res) => {
   const { whatsappNumber, code } = req.body;
 
   try {
-    const formatted = whatsappNumber.startsWith('+91') ? whatsappNumber : `+91${whatsappNumber}`;
+    const formatted = whatsappNumber.startsWith('+91') ? whatsappNo : `+91${whatsappNumber}`;
     const result = await verifyTwilioOtp(formatted, code);
 
     console.log("Twilio Verify Result:", result);

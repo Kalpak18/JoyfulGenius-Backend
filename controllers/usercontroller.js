@@ -7,39 +7,82 @@ import jwt from 'jsonwebtoken';
 import mongoose from 'mongoose';
 import sendEmail from '../Utils/sendEmail.js'; // helper to send email
 
+// export const forgotPasswordMobile = async (req, res) => {
+//   const { whatsappNo } = req.body;
+
+//   if (!whatsappNo ) {
+//     return res.status(400).json({ message: 'WhatsApp number is required' });
+//   }
+
+//   const rawNumber = whatsappNo .replace(/^\+91/, '');
+//   const user = await User.findOne({ whatsappNo: rawNumber });
+
+//   if (!user) return res.status(404).json({ message: 'User not found' });
+
+//   const formatted = whatsappNo .startsWith('+91') ? whatsappNo : `+91${whatsappNo }`;
+//   try {
+//     await sendTwilioOtp(formatted);
+//     res.status(200).json({ message: 'OTP sent successfully' });
+//   } catch (err) {
+//     console.error("OTP send error:", err);
+//     res.status(500).json({ message: 'Failed to send OTP' });
+//   }
+// };
+
 export const forgotPasswordMobile = async (req, res) => {
-  const { whatsappNumber } = req.body;
-
-  if (!whatsappNumber) {
-    return res.status(400).json({ message: 'WhatsApp number is required' });
-  }
-
-  const rawNumber = whatsappNumber.replace(/^\+91/, '');
-  const user = await User.findOne({ whatsappNo: rawNumber });
-
-  if (!user) return res.status(404).json({ message: 'User not found' });
-
-  const formatted = whatsappNumber.startsWith('+91') ? whatsappNumber : `+91${whatsappNumber}`;
   try {
-    await sendTwilioOtp(formatted);
-    res.status(200).json({ message: 'OTP sent successfully' });
-  } catch (err) {
-    console.error("OTP send error:", err);
-    res.status(500).json({ message: 'Failed to send OTP' });
+    const whatsappNo = req.body;
+
+    if (!whatsappNo ) {
+      return res.status(400).json({ message: 'WhatsApp number is required.' });
+    }
+
+    // Format number for Twilio
+    const formattedNumber = whatsappNo .startsWith('+91')
+      ? whatsappNo 
+      : `+91${whatsappNo }`;
+
+    // ✅ Find existing user
+    const user = await User.findOne({ whatsappNo : formattedNumber });
+    if (!user) {
+      return res.status(404).json({ message: 'No account found with this number.' });
+    }
+
+    // ✅ Cooldown check (5 min)
+    const MIN_OTP_INTERVAL = 5 * 60 * 1000;
+    if (user.otpLastSentAt && Date.now() - user.otpLastSentAt.getTime() < MIN_OTP_INTERVAL) {
+      return res.status(429).json({
+        message: 'OTP already sent recently. Please wait before requesting again.',
+      });
+    }
+
+    // ✅ Send OTP
+    await sendTwilioOtp(formattedNumber);
+
+    // ✅ Update last sent time
+    user.otpLastSentAt = new Date();
+    await user.save();
+
+    res.status(200).json({ message: 'OTP sent successfully to your mobile.' });
+  } catch (error) {
+    console.error('Forgot Password Mobile Error:', error.message);
+    res.status(500).json({ message: 'Server Error. Could not send OTP.' });
   }
 };
 
-export const verifyResetOtp = async (req, res) => {
-  const { whatsappNumber, code } = req.body;
 
-  const formatted = whatsappNumber.startsWith('+91') ? whatsappNumber : `+91${whatsappNumber}`;
+
+export const verifyResetOtp = async (req, res) => {
+  const { whatsappNo , code } = req.body;
+
+  const formatted = whatsappNo .startsWith('+91') ? whatsappNo : `+91${whatsappNo }`;
   const result = await verifyTwilioOtp(formatted, code);
 
   if (result.status !== 'approved') {
     return res.status(400).json({ message: 'Invalid OTP' });
   }
 
-  const rawNumber = whatsappNumber.replace(/^\+91/, '');
+  const rawNumber = whatsappNo .replace(/^\+91/, '');
   const user = await User.findOne({ whatsappNo: rawNumber });
 
   if (!user) return res.status(404).json({ message: 'User not found' });
@@ -126,47 +169,142 @@ export const resetPassword = async (req, res) => {
   res.status(200).json({ message: 'Password reset successful' });
 };
 
-export const registerUser = async (req, res) => {
-  const { whatsappNo } = req.body;
+// export const registerUser = async (req, res) => {
+//   const { whatsappNo } = req.body;
 
+//   try {
+//     if (!whatsappNo) {
+//       return res.status(400).json({ message: 'Mobile number is required' });
+//     }
+
+//     const cleanMobile = whatsappNo.replace(/^\+91/, '');
+//     const formattedNumber = whatsappNo.startsWith('+91') ? whatsappNo : `+91${whatsappNo}`;
+
+//     // const existingUsers = await User.countDocuments({ whatsappNo: cleanMobile });
+//     // if (existingUsers >= 3) {
+//     //   return res.status(400).json({ message: 'Only 3 accounts allowed per mobile number' });
+//     // }
+
+//     const existing = await User.findOne({ whatsappNo: cleanMobile });
+// if (existing) {
+//   return res.status(400).json({ message: 'This mobile number is already registered' });
+// }
+
+
+//     await sendTwilioOtp(formattedNumber);
+//     res.status(200).json({ message: 'OTP sent successfully', whatsappNo: cleanMobile });
+//   } catch (error) {
+//     res.status(500).json({ message: error.message });
+//   }
+// };
+
+// export const registerUser = async (req, res) => {
+//   try {
+//     const whatsappNo = req.body.whatsappNo || req.body.mobile;
+
+//     if (!whatsappNo ) {
+//       return res.status(400).json({ message: 'WhatsApp number is required.' });
+//     }
+
+//     // Format number for Twilio (+91 prefix if missing)
+//     const formattedNumber = whatsappNo .startsWith('+91')
+//       ? whatsappNo 
+//       : `+91${whatsappNo }`;
+
+//     // ✅ Check if already registered
+//     const existingUser = await User.findOne({ whatsappNo : formattedNumber });
+//     if (existingUser) {
+//       return res.status(400).json({ message: 'Number already registered.' });
+//     }
+
+//     // ✅ Cooldown check (5 minutes)
+//     const MIN_OTP_INTERVAL = 5 * 60 * 1000;
+//     if (existingUser?.otpLastSentAt && Date.now() - existingUser.otpLastSentAt.getTime() < MIN_OTP_INTERVAL) {
+//       return res.status(429).json({ message: 'OTP already sent recently. Please wait before requesting again.' });
+//     }
+
+//     // ✅ Create new user entry with number
+//     const newUser = new User({ whatsappNo : formattedNumber });
+
+//     // ✅ Send OTP
+//     await sendTwilioOtp(formattedNumber);
+
+//     // ✅ Save OTP send time
+//     newUser.otpLastSentAt = new Date();
+//     await newUser.save();
+
+//     res.status(201).json({ message: 'OTP sent successfully to your mobile.' });
+//   } catch (error) {
+//     console.error('Register Error:', error.message);
+//     res.status(500).json({ message: 'Server Error. Could not send OTP.' });
+//   }
+// };
+
+// REGISTER USER (No OTP for now)
+
+export const registerUser = async (req, res) => {
   try {
-    if (!whatsappNo) {
-      return res.status(400).json({ message: 'Mobile number is required' });
+    const { f_name, last_name, email, whatsappNo, district, password } = req.body;
+
+    if (!f_name || !last_name || !whatsappNo || !district || !password) {
+      return res.status(400).json({ message: "Please fill all required fields" });
     }
 
-    const cleanMobile = whatsappNo.replace(/^\+91/, '');
-    const formattedNumber = whatsappNo.startsWith('+91') ? whatsappNo : `+91${whatsappNo}`;
+    // Check unique WhatsApp
+    const existingUser = await User.findOne({ whatsappNo });
+    if (existingUser) {
+      return res.status(400).json({ message: "WhatsApp number already registered" });
+    }
 
-    // const existingUsers = await User.countDocuments({ whatsappNo: cleanMobile });
-    // if (existingUsers >= 3) {
-    //   return res.status(400).json({ message: 'Only 3 accounts allowed per mobile number' });
-    // }
+    // Check unique email (only if provided)
+    if (email && email.trim() !== "") {
+      const existingEmail = await User.findOne({ email });
+      if (existingEmail) {
+        return res.status(400).json({ message: "Email already registered" });
+      }
+    }
 
-    const existing = await User.findOne({ whatsappNo: cleanMobile });
-if (existing) {
-  return res.status(400).json({ message: 'This mobile number is already registered' });
-}
+    // 💤 OTP logic (kept for future)
+    // const otp = generateOTP();
+    // sendOtpToWhatsApp(whatsappNo, otp);
+    // await OtpModel.create({ whatsappNo, otp });
+    // return res.json({ message: "OTP sent" });
 
+    // Directly create user
+    const user = await User.create({
+      f_name,
+      last_name,
+      email: email && email.trim() !== "" ? email : undefined,
+      whatsappNo,
+      district,
+      password
+    });
 
-    await sendTwilioOtp(formattedNumber);
-    res.status(200).json({ message: 'OTP sent successfully', whatsappNo: cleanMobile });
+    // Return created user (without password)
+    const safeUser = user.toObject();
+    delete safeUser.password;
+
+    res.status(201).json({ message: "User registered successfully", user: safeUser });
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    console.error("Registration error:", error);
+    res.status(500).json({ message: "Server error" });
   }
 };
 
+
+
 export const verifyUserOtp = async (req, res) => {
-  const { whatsappNumber, code, user } = req.body;
+  const { whatsappNo , code, user } = req.body;
 
   try {
-    const formatted = whatsappNumber.startsWith('+91') ? whatsappNumber : `+91${whatsappNumber}`;
+    const formatted = whatsappNo .startsWith('+91') ? whatsappNo : `+91${whatsappNo }`;
     const result = await verifyTwilioOtp(formatted, code);
 
     console.log("🛡️ Twilio Verify Result:", result);
 
     if (result.status === 'approved') {
       // Remove +91 for storage
-      const rawNumber = whatsappNumber.replace(/^\+91/, '');
+      const rawNumber = whatsappNo .replace(/^\+91/, '');
 
       // Create new user — password will be hashed by Mongoose schema
       const newUser = new User({

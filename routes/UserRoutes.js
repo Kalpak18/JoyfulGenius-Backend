@@ -17,9 +17,9 @@ import { verifyAdmin } from '../middleware/auth.js';
 import { verifyUser } from '../middleware/auth.js';
 
 const router = express.Router();
-
-router.post('/send-otp', registerUser);
-router.post('/verify-otp', verifyUserOtp);
+router.post('/register', registerUser);
+// router.post('/send-otp', registerUser);
+// router.post('/verify-otp', verifyUserOtp);
 router.post('/login', loginUser);
 router.post("/mark-paid", verifyAdmin, markPaid);
 router.patch("/toggle-paid/:userId", verifyAdmin, togglePaidStatus);
