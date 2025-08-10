@@ -32,6 +32,8 @@ const studyMaterialSchema = new mongoose.Schema({
     enum: ["pdf", "video"],
     required: true,
   },
+  allowDownload: { type: Boolean, default: false },
+
   url: {
     type: String, // PDF path or video link
     required: true,
