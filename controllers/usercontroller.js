@@ -256,6 +256,16 @@ export const registerUser = async (req, res) => {
     if (!f_name || !last_name || !whatsappNo || !district || !password) {
       return res.status(400).json({ message: "Please fill all required fields" });
     }
+    const whatsappRegex = /^[0-9]{10,15}$/;
+    if (!whatsappRegex.test(whatsappNo)) {
+      return res.status(400).json({ message: "Invalid WhatsApp number format" });
+    }
+     if (email && email.trim() !== "") {
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(email)) {
+        return res.status(400).json({ message: "Invalid email format" });
+      }
+    }
 
     // Check unique WhatsApp
     const existingUser = await User.findOne({ whatsappNo });
@@ -275,7 +285,8 @@ export const registerUser = async (req, res) => {
     const user = await User.create({
       f_name,
       last_name,
-      email: email || undefined,
+      email: email && email.trim() !== "" ? email : undefined,
+      // email: email || undefined,
       whatsappNo,
       district,
       password
