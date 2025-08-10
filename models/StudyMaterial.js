@@ -52,6 +52,7 @@ const studyMaterialSchema = new mongoose.Schema({
     required: false,
     default: "General",
   },
+   
 }, { timestamps: true });
 
 export default mongoose.model("StudyMaterial", studyMaterialSchema);

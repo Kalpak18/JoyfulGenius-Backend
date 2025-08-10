@@ -173,7 +173,7 @@ import fs from "fs";
 // ✅ Single PDF or Video
 export const uploadMaterial = async (req, res) => {
   try {
-    const { title, subject, type, tags, category, url } = req.body;
+    const { title, subject, type, tags, category, url, allowDownload } = req.body;
 
     let finalUrl = url;
     if (type === "pdf" && req.file) {
@@ -185,6 +185,7 @@ export const uploadMaterial = async (req, res) => {
       subject,
       type,
       url: finalUrl,
+      allowDownload: allowDownload || false, 
       tags: tags ? JSON.parse(tags) : [],
       category,
       uploadedBy: req.adminId || null,
@@ -216,13 +217,14 @@ export const uploadMaterial = async (req, res) => {
 // ✅ Video Upload
 export const uploadVideoMaterial = async (req, res) => {
   try {
-    const { title, subject, type, tags, category, url } = req.body;
+    const { title, subject, type, tags, category, url, allowDownload } = req.body;
     
     const material = new StudyMaterial({ 
       title, 
       subject, 
       type,
       url,
+      allowDownload: allowDownload || false, 
       tags: tags ? JSON.parse(tags) : [],
       category,
       uploadedBy: req.adminId || null
@@ -349,7 +351,7 @@ export const getMaterials = async (req, res) => {
 //  ✅ Update 
 export const updateMaterial = async (req, res) => {
   try {
-    const { title, subject, type, category, tags, url } = req.body;
+    const { title, subject, type, category, tags, url, allowDownload } = req.body;
 
     // Get the existing material
     const existing = await StudyMaterial.findById(req.params.id);
@@ -383,6 +385,7 @@ export const updateMaterial = async (req, res) => {
         url: finalUrl,
         category: category || existing.category,
         tags: tags ? JSON.parse(tags) : existing.tags,
+        allowDownload: typeof allowDownload !== "undefined" ? allowDownload : existing.allowDownload, 
       },
       { new: true }
     );
