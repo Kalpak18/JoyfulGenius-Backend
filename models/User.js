@@ -37,13 +37,14 @@
 
 // export default mongoose.model('User', userSchema);
 
+
 import mongoose from "mongoose";
 import bcrypt from "bcryptjs";
 
 const userSchema = new mongoose.Schema(
   {
-    f_name: { type: String, required: true },
-    last_name: { type: String, required: true },
+    f_name: { type: String, required: true, trim: true },
+    last_name: { type: String, required: true, trim: true },
     email: {
       type: String,
       lowercase: true,
@@ -51,12 +52,17 @@ const userSchema = new mongoose.Schema(
       unique: true,
       sparse: true // allows multiple null values
     },
-    whatsappNo: { type: String, required: true, unique: true },
-    district: { type: String, required: true },
+    whatsappNo: {
+      type: String,
+      required: true,
+      unique: true,
+      set: v => v?.trim()
+    },
+    district: { type: String, required: true, trim: true },
     password: { type: String, required: true },
     verified: { type: Boolean, default: true },
     isPaid: { type: Boolean, default: false },
-    username: { type: String },
+    username: { type: String, trim: true },
     resetToken: String,
     resetTokenExpire: Date,
     otpLastSentAt: { type: Date }
@@ -64,10 +70,22 @@ const userSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+// Hash password before saving
 userSchema.pre("save", async function (next) {
+  // Trim only safe string fields (avoid trimming hashed password)
+  for (let key in this._doc) {
+    if (typeof this[key] === "string" && key !== "password") {
+      this[key] = this[key].trim();
+    }
+  }
+
+  // Hash password only if modified
   if (!this.isModified("password")) return next();
+
   const salt = await bcrypt.genSalt(10);
   this.password = await bcrypt.hash(this.password, salt);
+
+  next();
 });
 
 userSchema.methods.matchPassword = async function (enteredPassword) {

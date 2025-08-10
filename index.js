@@ -27,18 +27,57 @@ const app = express();
 //   origin: ['http://localhost:5173', 'https://your-frontend.vercel.app'], // update later
 //   credentials: true
 // }));
-const allowedOrigins = process.env.FRONTEND_URL?.split(',') || [];
+// const allowedOrigins = process.env.FRONTEND_URL?.split(',') || [];
+
+// app.use(cors({
+//   origin: function (origin, callback) {
+//     if (!origin || allowedOrigins.includes(origin)) {
+//       callback(null, true);
+//     } else {
+//       callback(new Error('Not allowed by CORS'));
+//     }
+//   },
+//   credentials: true
+// }));
+
+const PROD_DOMAIN = process.env.FRONTEND_URL?.trim()?.replace(/^https?:\/\//, '');
+
+// 🚀 Log allowed domains on startup
+console.log('------------------------------------');
+console.log(`✅ NODE_ENV: ${process.env.NODE_ENV}`);
+if (process.env.NODE_ENV !== 'production') {
+  console.log('✅ Dev Mode: Allowing http://localhost:* and http://127.0.0.1:*');
+}
+if (PROD_DOMAIN) {
+  console.log(`✅ Prod Mode: Allowing https://${PROD_DOMAIN} and all subdomains (*.${PROD_DOMAIN})`);
+} else {
+  console.log('⚠️  No FRONTEND_URL set — only localhost allowed in production!');
+}
+console.log('------------------------------------');
 
 app.use(cors({
-  origin: function (origin, callback) {
-    if (!origin || allowedOrigins.includes(origin)) {
-      callback(null, true);
-    } else {
-      callback(new Error('Not allowed by CORS'));
+  origin: (origin, callback) => {
+    if (!origin) return callback(null, true); // No Origin = allow (Postman, server-to-server)
+
+    if (process.env.NODE_ENV !== 'production') {
+      if (origin.startsWith('http://localhost:') || origin.startsWith('http://127.0.0.1:')) {
+        return callback(null, true);
+      }
     }
+
+    if (
+      PROD_DOMAIN &&
+      (origin === `https://${PROD_DOMAIN}` || origin.endsWith(`.${PROD_DOMAIN}`))
+    ) {
+      return callback(null, true);
+    }
+
+    console.error(`❌ CORS blocked: ${origin}`);
+    return callback(new Error('Not allowed by CORS'));
   },
   credentials: true
 }));
+
 app.use(express.json({ verify: (req, res, buf) => { req.rawBody = buf } }));
 
 // API Routes

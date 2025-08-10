@@ -244,7 +244,14 @@ export const resetPassword = async (req, res) => {
 
 export const registerUser = async (req, res) => {
   try {
-    const { f_name, last_name, email, whatsappNo, district, password } = req.body;
+    let { f_name, last_name, email, whatsappNo, district, password } = req.body;
+
+    // Trim all string inputs
+    f_name = f_name?.trim();
+    last_name = last_name?.trim();
+    email = email?.trim();
+    whatsappNo = whatsappNo?.trim();
+    district = district?.trim();
 
     if (!f_name || !last_name || !whatsappNo || !district || !password) {
       return res.status(400).json({ message: "Please fill all required fields" });
@@ -257,24 +264,18 @@ export const registerUser = async (req, res) => {
     }
 
     // Check unique email (only if provided)
-    if (email && email.trim() !== "") {
+    if (email) {
       const existingEmail = await User.findOne({ email });
       if (existingEmail) {
         return res.status(400).json({ message: "Email already registered" });
       }
     }
 
-    // 💤 OTP logic (kept for future)
-    // const otp = generateOTP();
-    // sendOtpToWhatsApp(whatsappNo, otp);
-    // await OtpModel.create({ whatsappNo, otp });
-    // return res.json({ message: "OTP sent" });
-
     // Directly create user
     const user = await User.create({
       f_name,
       last_name,
-      email: email && email.trim() !== "" ? email : undefined,
+      email: email || undefined,
       whatsappNo,
       district,
       password
@@ -284,12 +285,26 @@ export const registerUser = async (req, res) => {
     const safeUser = user.toObject();
     delete safeUser.password;
 
-    res.status(201).json({ message: "User registered successfully", user: safeUser });
+    res.status(201).json({
+      message: "User registered successfully",
+      user: safeUser
+    });
+
   } catch (error) {
     console.error("Registration error:", error);
+
+    // Friendly duplicate key error handling
+    if (error.code === 11000 && error.keyValue) {
+      const field = Object.keys(error.keyValue)[0];
+      return res.status(400).json({
+        message: `${field.charAt(0).toUpperCase() + field.slice(1)} already registered`
+      });
+    }
+
     res.status(500).json({ message: "Server error" });
   }
 };
+
 
 
 
