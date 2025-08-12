@@ -9,7 +9,7 @@ import {
   getMaterialById,
   deleteTopic
 } from '../controllers/StudyMaterialController.js';
-import upload from '../middleware/upload.js';
+import upload from '../middleware/Upload.js';
 import { verifyAdmin } from '../middleware/auth.js';
 
 const router = express.Router();
