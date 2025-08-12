@@ -20,7 +20,7 @@ import errorHandler from './middleware/errorHandler.js';
 import chapterRoutes from "./routes/chapterRoutes.js";
 
 dotenv.config();
-// connectDB();
+connectDB();
 
 
 
@@ -89,7 +89,7 @@ app.use(errorHandler);
 async function startServer() {
   try {
     await initGridFS(); // Explicit initialization
-    await connectDB(); 
+    // await connectDB(); 
     
     const PORT = process.env.PORT || 3000;
     app.listen(PORT, () => {
