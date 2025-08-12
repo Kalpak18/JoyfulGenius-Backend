@@ -5,6 +5,7 @@ import cors from 'cors';
 import path from 'path';
 import { fileURLToPath } from "url";
 import connectDB from './config/db.js';
+import { initGridFS } from './config/gridfs.js';
 
 import userRoutes from './routes/UserRoutes.js';
 import otpRoutes from './routes/otpRoutes.js';
@@ -19,7 +20,24 @@ import errorHandler from './middleware/errorHandler.js';
 import chapterRoutes from "./routes/chapterRoutes.js";
 
 dotenv.config();
-connectDB();
+// connectDB();
+
+async function startServer() {
+  try {
+    await initGridFS(); // Explicit initialization
+    await connectDB(); 
+    
+    const PORT = process.env.PORT || 3000;
+    app.listen(PORT, () => {
+    console.log(`🚀 Backend server running on port ${PORT}`);
+});
+ } catch (err) {
+    console.error('Server startup failed:', err);
+    process.exit(1);
+  }
+}
+
+startServer();
 
 const app = express();
 
@@ -101,10 +119,10 @@ app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 app.use(errorHandler);
 
 // Server
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`🚀 Backend server running on port ${PORT}`);
-});
+// const PORT = process.env.PORT || 3000;
+// app.listen(PORT, () => {
+//   console.log(`🚀 Backend server running on port ${PORT}`);
+// });
 
 
 

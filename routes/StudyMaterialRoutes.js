@@ -1,46 +1,45 @@
-import express from "express";
+import express from 'express';
 import {
   uploadMaterial,
-  uploadMultipleMaterials,
-  uploadVideoMaterial,
-  uploadMultipleVideos,
-  getMaterials,
-  deleteMaterial,
-  updateMaterial,
-} from "../controllers/StudyMaterialController.js";
-import { verifyAdmin } from "../middleware/auth.js";
-import upload from "../middleware/Upload.js";
+  removeFile,
+  replaceFile,
+  removeYouTubeLink,
+  getFile,
+  getAllMaterials,
+  getMaterialById,
+  deleteTopic
+} from '../controllers/StudyMaterialController.js';
+import upload from '../middleware/upload.js';
+import { verifyAdmin } from '../middleware/auth.js';
 
 const router = express.Router();
 
-// Single PDF or Video upload
+// ---------------------- ADMIN ROUTES ---------------------- //
 router.post(
-  "/upload",
+  '/upload',
   verifyAdmin,
-  upload.single("pdf"),
+  upload.array('files', 10), // Max 10 files
   uploadMaterial
 );
 
-// 🔹 Multiple PDF upload
-router.post(
-  "/upload-multiple",
+router.delete('/:id/file/:fileId', verifyAdmin, removeFile);
+
+router.put(
+  '/:id/file/:fileId',
   verifyAdmin,
-  upload.array("pdfs", 10),
-  uploadMultipleMaterials
+  upload.single('file'), // Single file for replacement
+  replaceFile
 );
 
-router.post("/video", verifyAdmin, uploadVideoMaterial);
+router.delete('/:id/youtube/:linkIndex', verifyAdmin, removeYouTubeLink);
 
-// 🔹 Multiple video URLs upload
-router.post(
-  "/video-multiple",
-  verifyAdmin,
-  uploadMultipleVideos
-);
+router.delete('/:id', verifyAdmin, deleteTopic);
 
-// Read / Edit / Delete
-router.get("/", getMaterials);
-router.delete("/:id", verifyAdmin, deleteMaterial);
-router.put("/:id", verifyAdmin, upload.single("pdf"), updateMaterial);
+// ---------------------- PUBLIC ROUTES ---------------------- //
+router.get('/:id/file/:fileId', getFile);
+
+router.get('/', getAllMaterials); // ?courseName=&subjectName=&topicName=
+
+router.get('/:id', getMaterialById);
 
 export default router;

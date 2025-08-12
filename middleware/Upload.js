@@ -22,32 +22,49 @@
 // export default upload;
 
 
-// middleware/Upload.js
-import multer from "multer";
+// import multer from "multer";
 
-// Use memory storage to avoid local disk writes
-const storage = multer.memoryStorage();
+// // Store files in memory (buffer) so we can send directly to Supabase
+// const storage = multer.memoryStorage();
+
+// const fileFilter = (req, file, cb) => {
+//   const allowedTypes = [
+//     "application/pdf",
+//     "video/mp4",
+//     "image/jpeg",
+//     "image/png"
+//   ];
+//   if (allowedTypes.includes(file.mimetype)) {
+//     cb(null, true);
+//   } else {
+//     cb(new Error("Invalid file type"), false);
+//   }
+// };
+
+// // const upload = multer({ storage, fileFilter });
+// const upload = multer({
+//   storage,
+//   fileFilter,
+//   limits: { fileSize: 50 * 1024 * 1024 } // 50MB limit
+// });
+
+// export default upload;
+
+
+// middleware/upload.js
+import multer from 'multer';
+
+const storage = multer.memoryStorage(); // Store files in memory
+
+const fileFilter = (req, file, cb) => {
+  const allowedTypes = ['application/pdf', 'image/jpeg', 'image/png', 'video/mp4'];
+  cb(null, allowedTypes.includes(file.mimetype));
+};
 
 const upload = multer({
   storage,
-  limits: {
-    fileSize: 200 * 1024 * 1024, // 200MB per file, adjust if needed
-  },
-  fileFilter: (req, file, cb) => {
-    // Allow PDFs & videos
-    const allowedMimeTypes = [
-      "application/pdf",
-      "video/mp4",
-      "video/webm",
-      "video/mkv",
-      "video/quicktime", // mov
-    ];
-    if (allowedMimeTypes.includes(file.mimetype)) {
-      cb(null, true);
-    } else {
-      cb(new Error("Only PDF and video files are allowed"));
-    }
-  },
+  fileFilter,
+  limits: { fileSize: 50 * 1024 * 1024 } // 50MB limit
 });
 
 export default upload;
