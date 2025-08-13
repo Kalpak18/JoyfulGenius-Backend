@@ -256,10 +256,18 @@ export const registerUser = async (req, res) => {
     if (!f_name || !last_name || !whatsappNo || !district || !password) {
       return res.status(400).json({ message: "Please fill all required fields" });
     }
-    const whatsappRegex = /^[0-9]{10,15}$/;
-    if (!whatsappRegex.test(whatsappNo)) {
-      return res.status(400).json({ message: "Invalid WhatsApp number format" });
-    }
+    whatsappNo = whatsappNo.replace(/\D/g, "");
+
+
+    if (whatsappNo.startsWith("91") && whatsappNo.length > 10) {
+  whatsappNo = whatsappNo.slice(-10); // keep only last 10 digits
+}
+
+   const whatsappRegex = /^[0-9]{10}$/;
+if (!whatsappRegex.test(whatsappNo)) {
+  return res.status(400).json({ message: "WhatsApp number must be exactly 10 digits" });
+}
+
      if (email && email.trim() !== "") {
       const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
       if (!emailRegex.test(email)) {

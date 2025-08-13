@@ -23,7 +23,10 @@ export const initGridFS = async () => {
 
 export const getBucket = async () => {
   if (!bucket) {
-    await initGridFS(); // Auto-initialize if not done
+    console.log("Bucket not initialized yet, initializing...");
+    await initGridFS();
+  } else {
+    console.log("Bucket already exists, returning existing one");
   }
   return bucket;
 };

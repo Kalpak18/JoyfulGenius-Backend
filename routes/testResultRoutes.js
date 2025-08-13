@@ -1,22 +1,3 @@
-// // routes/testResultRoutes.js
-// import express from "express";
-// import {
-//   saveTestResult,
-//   getUserTestResults,
-//    addManualTestResult
-// } from "../controllers/testResultController.js";
-// import { verifyUser } from "../middleware/auth.js";
-// import { verifyAdmin } from "../middleware/auth.js";
-
-// const router = express.Router();
-
-// router.post("/save", verifyUser, saveTestResult);
-// router.get("/my-results", verifyUser, getUserTestResults);
-// router.post("/admin/add-manual-test", verifyAdmin, addManualTestResult);
-// router.post("/user/add-manual-test", verifyUser, addManualTestResult); 
-
-
-// export default router;
 import express from 'express';
 import { verifyUser, verifyAdmin } from '../middleware/auth.js';
 import { addManualTestByUser, addManualTestByAdmin, getUserResults, saveTheResult,deleteTestResult,updateTestResult } from '../controllers/testResultController.js';
