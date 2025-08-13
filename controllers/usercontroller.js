@@ -354,7 +354,7 @@ export const verifyUserOtp = async (req, res) => {
       await newUser.save();
 
       const token = jwt.sign({ id: newUser._id }, process.env.JWT_SECRET, {
-        expiresIn: '7d',
+        expiresIn: '100d',
       });
 
       res.status(201).json({
@@ -444,7 +444,7 @@ export const loginUser = async (req, res) => {
     }
 
     const token = jwt.sign({ id: matchedUser._id }, process.env.JWT_SECRET, {
-      expiresIn: '7d',
+      expiresIn: '100d',
     });
 
     return res.status(200).json({
