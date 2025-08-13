@@ -3,6 +3,8 @@ import { verifyUser, verifyAdmin } from '../middleware/auth.js';
 import { addManualTestByUser, addManualTestByAdmin, getUserResults, saveTheResult,deleteTestResult,updateTestResult } from '../controllers/testResultController.js';
 
 const router = express.Router();
+
+
 router.post("/save", verifyUser, saveTheResult);
 
 router.post('/add-manual', verifyUser, addManualTestByUser); // User adds own test

@@ -1,7 +1,7 @@
 import express from 'express';
 import {
   registerUser,
-  verifyUserOtp,
+  // verifyUserOtp,
   loginUser,
   markPaid,
   togglePaidStatus,
@@ -20,6 +20,8 @@ import { protect } from '../controllers/authController.js';
 
 
 const router = express.Router();
+
+
 router.post('/register', registerUser);
 // router.post('/send-otp', registerUser);
 // router.post('/verify-otp', verifyUserOtp);
