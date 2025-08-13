@@ -52,11 +52,13 @@ app.use(cors({
     }
 
     if (
-      PROD_DOMAIN &&
-      (origin === `https://${PROD_DOMAIN}` || origin.endsWith(`.${PROD_DOMAIN}`))
-    ) {
-      return callback(null, true);
-    }
+  PROD_DOMAIN &&
+  (origin === `https://${PROD_DOMAIN}` ||
+   origin === `https://www.${PROD_DOMAIN}` ||
+   origin.endsWith(`.${PROD_DOMAIN}`))
+) {
+  return callback(null, true);
+}
 
     console.error(`❌ CORS blocked: ${origin}`);
     return callback(new Error('Not allowed by CORS'));
