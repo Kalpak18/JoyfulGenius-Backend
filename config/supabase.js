@@ -1,5 +1,8 @@
 import { createClient } from "@supabase/supabase-js";
+import { env } from "./validateEnv.js";
 
-const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
+const {SUPABASE_URL, SUPABASE_KEY} = env;
+
+const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
 export default supabase;

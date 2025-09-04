@@ -1,23 +1,61 @@
-// backend/routes/questionRoutes.js
-import express from 'express';
+import express from "express";
 import {
   addQuestion,
   getQuestions,
-  updateQuestion,
   deleteQuestion,
-  getQuestionMetadata,
-} from '../controllers/questionController.js';
+  updateQuestion,
+  getQuestionMetadata
+} from "../controllers/questionController.js";
+
+import { validateRequest as validate } from "../middleware/validateRequest.js";
+import {
+  addQuestionSchema,
+  updateQuestionSchema,
+  deleteQuestionSchema,
+  getQuestionsSchema
+} from "../validation/questionSchemas.js";
+
+import { verifyAdmin, protect } from "../middleware/auth.js";
 
 const router = express.Router();
 
-router.post('/add', addQuestion);
+// Add a question (Admin only)
+router.post(
+  "/",
+  verifyAdmin,
+  validate(addQuestionSchema),
+  addQuestion
+);
 
-router.get('/:subject/:chapter', getQuestions);
+// Get questions (any logged in user)
+router.get(
+  "/",
+  protect,
+  validate(getQuestionsSchema),
+  getQuestions
+);
 
-router.put('/:id', updateQuestion);
+// Update a question (Admin only)
+router.patch(
+  "/:id",
+  verifyAdmin,
+  validate(updateQuestionSchema),
+  updateQuestion
+);
 
-router.delete('/:id', deleteQuestion);
+// Delete a question (Admin only)
+router.delete(
+  "/:id",
+  verifyAdmin,
+  validate(deleteQuestionSchema),
+  deleteQuestion
+);
 
-router.get("/all-metadata", getQuestionMetadata);
- 
+// Get metadata for filters (any logged in user)
+router.get(
+  "/metadata",
+  protect,
+  getQuestionMetadata
+);
+
 export default router;

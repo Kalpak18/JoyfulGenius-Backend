@@ -1,48 +1,87 @@
-import express from 'express';
+// routes/userRoutes.js
+import express from "express";
+import { protect, verifyAdmin, verifyUser } from "../middleware/auth.js";
 import {
   registerUser,
-  // verifyUserOtp,
+  verifyUserOtp,
   loginUser,
-  markPaid,
-  togglePaidStatus,
-  getUserProfile,
-  forgotPassword,
-  resetPassword,
+  refreshToken,
+  logout,
   forgotPasswordMobile,
   verifyResetOtp,
+  forgotPassword,
+  resetPassword,
+  getUserProfile,
   updateEmail,
   deleteAccount,
-  getCurrentUser
-} from '../controllers/usercontroller.js';
-import { verifyAdmin } from '../middleware/auth.js';
-import { verifyUser } from '../middleware/auth.js';
-import { protect } from '../controllers/authController.js';
+  togglePaidStatusForCourse,
+  getCurrentUser,
+  markUserPaidForCourse, 
+  unmarkUserPaidForCourse,
+  getUsersByCourse,
+  updateCourseProgress,
+  updateCourseTestResult,
+  trackCourseVisit
+} from "../controllers/usercontroller.js";
 
+import { validateRequest as validate }  from "../middleware/validateRequest.js";
+import {
+  registerUserSchema,
+  verifyUserOtpSchema,
+  loginUserSchema,
+  forgotPasswordMobileSchema,
+  verifyResetOtpSchema,
+  forgotPasswordSchema,
+  resetPasswordSchema,
+  updateEmailSchema,
+  markPaidForCourseSchema, 
+  unmarkPaidForCourseSchema,
+  togglePaidStatusForCourseSchema,
+  getCurrentUserSchema
+} from "../validation/userSchemas.js";
 
 const router = express.Router();
 
+// ---------- Public Routes ----------
+router.post("/register", validate(registerUserSchema), registerUser);
+router.post("/verify-otp", validate(verifyUserOtpSchema), verifyUserOtp);
+router.post("/login", validate(loginUserSchema), loginUser);
 
-router.post('/register', registerUser);
-// router.post('/send-otp', registerUser);
-// router.post('/verify-otp', verifyUserOtp);
-router.post('/login', loginUser);
-router.post("/mark-paid", verifyAdmin, markPaid);
-router.patch("/toggle-paid/:userId", verifyAdmin, togglePaidStatus);
-router.get("/profile", verifyUser, getUserProfile);
-router.post('/forgot-password', forgotPassword);
-router.post('/reset-password/:token', resetPassword);
-router.post('/forgot-password-mobile', forgotPasswordMobile);
-router.post('/verify-reset-otp', verifyResetOtp);
+router.post("/forgot-password/mobile", validate(forgotPasswordMobileSchema), forgotPasswordMobile);
+router.post("/verify-reset-otp", validate(verifyResetOtpSchema), verifyResetOtp);
+router.post("/forgot-password", validate(forgotPasswordSchema), forgotPassword);
+router.post("/reset-password/:token", validate(resetPasswordSchema), resetPassword);
 
-router.patch("/update-email", verifyUser, updateEmail);
+// Refresh uses HttpOnly cookie
+router.post("/auth/refresh", refreshToken);
 
-// ✅ Delete Account
-router.delete("/delete-account", verifyUser, deleteAccount);
+// ---------- Protected-ish Routes ----------
+router.post("/logout",  logout);
+// Prefer /current in frontend, keep /me for internal/debug
+router.get("/me", protect, getUserProfile);
+router.get("/current", verifyUser, validate(getCurrentUserSchema), getCurrentUser);
 
 
+router.patch("/email", protect, validate(updateEmailSchema), updateEmail);
+router.delete("/account", protect, deleteAccount);
 
+// ---------- Payment / Admin-ish Routes ----------
 
-router.get("/me", protect, getCurrentUser);
+router.post("/:userId/course/:courseId/markPaid", verifyAdmin, validate(markPaidForCourseSchema), markUserPaidForCourse);
+router.post("/:userId/course/:courseId/unmarkPaid", verifyAdmin, validate(unmarkPaidForCourseSchema), unmarkUserPaidForCourse);
+router.post("/:userId/course/:courseId/togglePaid", verifyAdmin, validate(togglePaidStatusForCourseSchema), togglePaidStatusForCourse);
+
+// router.post("/mark-paid", verifyAdmin, validate(markPaidForCourseSchema), markUserPaidForCourse);
+// router.post("/unmark-paid", verifyAdmin, validate(unmarkPaidForCourseSchema), unmarkUserPaidForCourse);
+// router.patch("/:userId/toggle-paid", verifyAdmin, validate(togglePaidStatusForCourseSchema), togglePaidStatusForCourse);
+
+router.post("/track-course/:userId/:courseId", protect, trackCourseVisit);
+router.get("/course/:courseId", verifyAdmin, getUsersByCourse);
+router.put("/admin/user/:userId/course/:courseId/progress", verifyAdmin, updateCourseProgress);
+router.put("/admin/user/:userId/course/:courseId/test", verifyAdmin, updateCourseTestResult);
+
 
 
 export default router;
+
+

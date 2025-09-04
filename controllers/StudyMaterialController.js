@@ -6,33 +6,28 @@ import { getBucket } from "../config/gridfs.js";
 
 /**
  * POST /api/materials
- * Fields:
- *  - title (string, required)
- *  - subject (string, required)
- *  - type: "pdf" | "video" | "youtube" (required)
- *  - downloadable: boolean (optional)
- *  - youtubeLink: string (if type === "youtube")
- *  - file: multipart file (if type === "pdf" or "video")
  */
 export const createMaterial = async (req, res) => {
   try {
-    const { title, subject, chapter, type, downloadable, youtubeLink } = req.body;
+   const { courseId, subjectId, chapterId, title, type, downloadable, youtubeLink } = req.body;
 
-    if (!title?.trim() || !subject?.trim()|| !chapter?.trim() || !type) {
-      return res.status(400).json({ success: false, message: "title, subject and type are required" });
-    }
+if (!courseId || !subjectId || !chapterId || !title?.trim() || !type) {
+  return res.status(400).json({ success: false, message: "courseId, subjectId, chapterId, title and type are required" });
+}
+
 
     let fileId = null;
 
-    // Store the actual file into GridFS if not YouTube
+    // Upload file if not YouTube
     if (type !== "youtube") {
       if (!req.file) {
         return res.status(400).json({ success: false, message: "File is required for pdf/video" });
       }
       fileId = await uploadFile(req.file, {
+        courseId,
+        subjectId,
+        chapterId,
         title,
-        subject,
-        chapter,
         type,
         downloadable: downloadable === "true" || downloadable === true,
       });
@@ -43,14 +38,15 @@ export const createMaterial = async (req, res) => {
     }
 
     const material = await StudyMaterial.create({
+      courseId,
+      subjectId,
+      chapterId,
       title: title.trim(),
-      subject: subject.trim(),
-      chapter: chapter.trim(),
       type,
       fileId,
       youtubeLink: type === "youtube" ? youtubeLink.trim() : null,
       downloadable: downloadable === "true" || downloadable === true,
-       uploadedBy: req.admin._id 
+      uploadedBy: req.admin._id
     });
 
     return res.status(201).json({ success: true, data: material });
@@ -60,18 +56,119 @@ export const createMaterial = async (req, res) => {
   }
 };
 
-/** GET /api/materials */
-export const listMaterials = async (_req, res) => {
+export const listMaterials = async (req, res) => {
   try {
-    const materials = await StudyMaterial.find().sort({ createdAt: -1 });
-     return res.json({ success: true, data: Array.isArray(materials) ? materials : [] });
-  } catch (err) {
-    console.error("List materials error:", err);
-     return res.status(500).json({ success: false, data: [], message: "Server error fetching materials" });
+    const { courseId, subjectId, chapterId, page = 1, limit = 20 } = req.query;
+    const filter = {};
+
+    if (courseId) filter.courseId = new mongoose.Types.ObjectId(courseId);
+    if (subjectId) filter.subjectId = new mongoose.Types.ObjectId(subjectId);
+    if (chapterId) filter.chapterId = new mongoose.Types.ObjectId(chapterId);
+
+    // Fetch all filtered materials with lookups
+    const materials = await StudyMaterial.aggregate([
+      { $match: filter },
+      {
+        $lookup: {
+          from: "chapters",
+          localField: "chapterId",
+          foreignField: "_id",
+          as: "chapter",
+        },
+      },
+      { $unwind: { path: "$chapter", preserveNullAndEmptyArrays: true } },
+      {
+        $lookup: {
+          from: "courses",
+          localField: "courseId",
+          foreignField: "_id",
+          as: "course",
+        },
+      },
+      { $unwind: { path: "$course", preserveNullAndEmptyArrays: true } },
+      {
+        $lookup: {
+          from: "subjects",
+          localField: "subjectId",
+          foreignField: "_id",
+          as: "subject",
+        },
+      },
+      { $unwind: { path: "$subject", preserveNullAndEmptyArrays: true } },
+      {
+        $project: {
+          _id: 1,
+          title: 1,
+          type: 1,
+          youtubeLink: 1,
+          downloadable: 1,
+          createdAt: 1,
+          courseId: "$course._id",
+          courseTitle: "$course.title",
+          subjectId: "$subject._id",
+          subject: "$subject.title",
+          chapterId: "$chapter._id",
+          chapterTitle: "$chapter.title",
+        },
+      },
+    ]);
+
+    // Group materials: Course → Subject → Chapter → Materials
+    const coursesMap = {};
+
+    materials.forEach((m) => {
+      if (!coursesMap[m.courseId]) {
+        coursesMap[m.courseId] = { courseId: m.courseId, courseTitle: m.courseTitle, subjects: {} };
+      }
+
+      if (!coursesMap[m.courseId].subjects[m.subjectId]) {
+        coursesMap[m.courseId].subjects[m.subjectId] = { subjectId: m.subjectId, subject: m.subject, chapters: {} };
+      }
+
+      if (!coursesMap[m.courseId].subjects[m.subjectId].chapters[m.chapterId]) {
+        coursesMap[m.courseId].subjects[m.subjectId].chapters[m.chapterId] = { chapterId: m.chapterId, chapterTitle: m.chapterTitle, materials: [] };
+      }
+
+      coursesMap[m.courseId].subjects[m.subjectId].chapters[m.chapterId].materials.push({
+        _id: m._id,
+        title: m.title,
+        type: m.type,
+        youtubeLink: m.youtubeLink,
+        downloadable: m.downloadable,
+        createdAt: m.createdAt,
+        fileUrl: m.type !== "youtube" ? `/api/materials/${m._id}/stream` : null,
+      });
+    });
+
+    // Convert map → array
+    let groupedCourses = Object.values(coursesMap).map((course) => ({
+      ...course,
+      subjects: Object.values(course.subjects).map((subj) => ({
+        ...subj,
+        chapters: Object.values(subj.chapters),
+      })),
+    }));
+
+    // Pagination applied after grouping
+    const startIndex = (parseInt(page) - 1) * parseInt(limit);
+    const endIndex = startIndex + parseInt(limit);
+    const paginatedCourses = groupedCourses.slice(startIndex, endIndex);
+
+    res.status(200).json({
+      totalCourses: groupedCourses.length,
+      page: parseInt(page),
+      limit: parseInt(limit),
+      data: paginatedCourses,
+    });
+  } catch (error) {
+    console.error("❌ Error listing materials:", error);
+    res.status(500).json({ message: "Server error" });
   }
 };
 
-/** GET /api/materials/:id */
+/**
+ * GET /api/materials/:id
+ */
 export const getMaterial = async (req, res) => {
   try {
     const material = await StudyMaterial.findById(req.params.id);
@@ -83,7 +180,9 @@ export const getMaterial = async (req, res) => {
   }
 };
 
-/** GET /api/materials/:id/stream — stream PDF or MP4 from GridFS */
+/**
+ * GET /api/materials/:id/stream
+ */
 export const streamMaterial = async (req, res) => {
   try {
     const material = await StudyMaterial.findById(req.params.id);
@@ -92,8 +191,6 @@ export const streamMaterial = async (req, res) => {
 
     const bucket = await getBucket();
     const _id = new mongoose.Types.ObjectId(material.fileId);
-
-    // Try to get file metadata for contentType + filename
     const files = await bucket.find({ _id }).toArray();
     if (!files || !files.length) return res.status(404).json({ success: false, message: "File not found in GridFS" });
 
@@ -101,11 +198,10 @@ export const streamMaterial = async (req, res) => {
     const contentType = fileDoc.contentType || (material.type === "pdf" ? "application/pdf" : "video/mp4");
     const filename = fileDoc.filename || material.title;
 
-    // If video and Range header present, support partial content
     if (contentType.startsWith("video") && req.headers.range) {
       const range = req.headers.range;
       const fileSize = fileDoc.length;
-      const CHUNK_SIZE = 1 * 1024 * 1024; // 1MB
+      const CHUNK_SIZE = 1 * 1024 * 1024;
       const start = Number(range.replace(/\D/g, ""));
       const end = Math.min(start + CHUNK_SIZE, fileSize - 1);
       const contentLength = end - start + 1;
@@ -122,7 +218,6 @@ export const streamMaterial = async (req, res) => {
       return;
     }
 
-    // Full stream (PDF inline or full video when no range)
     res.set({
       "Content-Type": contentType,
       "Content-Disposition": `inline; filename="${filename}"`,
@@ -138,7 +233,9 @@ export const streamMaterial = async (req, res) => {
   }
 };
 
-/** GET /api/materials/:id/download — only if downloadable === true */
+/**
+ * GET /api/materials/:id/download
+ */
 export const downloadMaterial = async (req, res) => {
   try {
     const material = await StudyMaterial.findById(req.params.id);
@@ -169,7 +266,9 @@ export const downloadMaterial = async (req, res) => {
   }
 };
 
-/** DELETE /api/materials/:id */
+/**
+ * DELETE /api/materials/:id
+ */
 export const deleteMaterial = async (req, res) => {
   try {
     const material = await StudyMaterial.findById(req.params.id);
@@ -185,255 +284,3 @@ export const deleteMaterial = async (req, res) => {
     return res.status(500).json({ success: false, message: "Server error deleting material" });
   }
 };
-
-
-// import StudyMaterial from "../models/StudyMaterial.js";
-// import { getBucket } from "../config/gridfs.js";
-// import mongoose from "mongoose";
-
-// const bucket = await getBucket();
-
-// // 1. Upload/Update Material (Combined Endpoint)
-// export const uploadMaterial = async (req, res) => {
-//   try {
-//     const { courseName, subjectName, topicName, youtubeLinks, materialId, allowDownload } = req.body;
-//     const files = req.files || [];
-
-//     // Process file uploads
-//     const uploadedFiles = await Promise.all(
-//       files.map(file => 
-//         new Promise((resolve, reject) => {
-//           const uploadStream = bucket.openUploadStream(file.originalname, {
-//             contentType: file.mimetype,
-//             metadata: { allowDownload: allowDownload === "true" }
-//           });
-
-//           uploadStream.on('finish', () => resolve({
-//             fileId: uploadStream.id,
-//             fileName: file.originalname,
-//             mimeType: file.mimetype,
-//             fileType: file.mimetype.split('/')[0],
-//             allowDownload: allowDownload === "true",
-//             size: file.size
-//           }));
-          
-//           uploadStream.on('error', reject);
-//           uploadStream.end(file.buffer);
-//         })
-//       )
-//     );
-
-//     // Process YouTube links
-//     const ytLinksArray = youtubeLinks
-//       ? Array.isArray(youtubeLinks) ? youtubeLinks : youtubeLinks.split(',')
-//       : [];
-
-//     let material;
-
-//     if (materialId) {
-//       // Update existing material
-//       material = await StudyMaterial.findById(materialId);
-//       if (!material) return res.status(404).json({ error: "Material not found" });
-
-//       // Update metadata
-//       material.courseName = courseName || material.courseName;
-//       material.subjectName = subjectName || material.subjectName;
-//       material.topicName = topicName || material.topicName;
-
-//       // Add new files/links
-//       if (uploadedFiles.length) material.files.push(...uploadedFiles);
-//       if (ytLinksArray.length) material.youtubeLinks.push(...ytLinksArray.filter(l => !material.youtubeLinks.includes(l)));
-
-//     } else {
-//       // Create new material
-//       material = new StudyMaterial({
-//         courseName,
-//         subjectName,
-//         topicName,
-//         files: uploadedFiles,
-//         youtubeLinks: ytLinksArray
-//       });
-//     }
-
-//     await material.save();
-//     res.json({ success: true, material });
-
-//   } catch (err) {
-//     console.error("Upload Error:", err);
-//     res.status(500).json({ 
-//       error: err.message,
-//       stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
-//     });
-//   }
-// };
-
-// // 2. Delete Single File
-// export const removeFile = async (req, res) => {
-//   try {
-//     const { id, fileId } = req.params;
-    
-//     const material = await StudyMaterial.findById(id);
-//     if (!material) return res.status(404).json({ error: "Material not found" });
-
-//     const file = material.files.id(fileId);
-//     if (!file) return res.status(404).json({ error: "File not found" });
-
-//     // Delete from GridFS
-//     await bucket.delete(new mongoose.Types.ObjectId(file.fileId));
-    
-//     // Remove from MongoDB document
-//     material.files.pull(fileId);
-//     await material.save();
-
-//     res.json({ success: true });
-
-//   } catch (err) {
-//     console.error("Delete Error:", err);
-//     res.status(500).json({ error: "Failed to delete file" });
-//   }
-// };
-
-// // 3. Replace Single File
-// export const replaceFile = async (req, res) => {
-//   try {
-//     const { id, fileId } = req.params;
-//     const newFile = req.file;
-    
-//     const material = await StudyMaterial.findById(id);
-//     if (!material) return res.status(404).json({ error: "Material not found" });
-
-//     const oldFile = material.files.id(fileId);
-//     if (!oldFile) return res.status(404).json({ error: "File not found" });
-
-//     // Delete old file
-//     await bucket.delete(new mongoose.Types.ObjectId(oldFile.fileId));
-
-//     // Upload new file
-//     const uploadStream = bucket.openUploadStream(newFile.originalname, {
-//       contentType: newFile.mimetype,
-//       metadata: { allowDownload: oldFile.allowDownload }
-//     });
-//     uploadStream.end(newFile.buffer);
-
-//     // Update file reference
-//     oldFile.fileId = uploadStream.id;
-//     oldFile.fileName = newFile.originalname;
-//     oldFile.mimeType = newFile.mimetype;
-//     oldFile.size = newFile.size;
-
-//     await material.save();
-//     res.json({ success: true, material });
-
-//   } catch (err) {
-//     console.error("Replace Error:", err);
-//     res.status(500).json({ error: "Failed to replace file" });
-//   }
-// };
-
-// // 4. Delete YouTube Link
-// export const removeYouTubeLink = async (req, res) => {
-//   try {
-//     const { id, linkIndex } = req.params;
-    
-//     const material = await StudyMaterial.findById(id);
-//     if (!material) return res.status(404).json({ error: "Material not found" });
-
-//     if (linkIndex < 0 || linkIndex >= material.youtubeLinks.length) {
-//       return res.status(400).json({ error: "Invalid link index" });
-//     }
-
-//     material.youtubeLinks.splice(linkIndex, 1);
-//     await material.save();
-
-//     res.json({ success: true });
-
-//   } catch (err) {
-//     console.error("YouTube Link Error:", err);
-//     res.status(500).json({ error: "Failed to remove link" });
-//   }
-// };
-
-// // 5. Stream File (View/Download)
-// export const getFile = async (req, res) => {
-//   try {
-//     const { id, fileId } = req.params;
-    
-//     const material = await StudyMaterial.findById(id);
-//     if (!material) return res.status(404).json({ error: "Material not found" });
-
-//     const file = material.files.id(fileId);
-//     if (!file) return res.status(404).json({ error: "File not found" });
-
-//     const downloadStream = bucket.openDownloadStream(new mongoose.Types.ObjectId(file.fileId));
-
-//     // Set headers based on download permission
-//     res.set({
-//       'Content-Type': file.mimeType,
-//       'Content-Disposition': file.allowDownload 
-//         ? `attachment; filename="${file.fileName}"` 
-//         : 'inline'
-//     });
-
-//     downloadStream.pipe(res);
-
-//   } catch (err) {
-//     console.error("Stream Error:", err);
-//     res.status(500).json({ error: "Failed to stream file" });
-//   }
-// };
-
-// // 6. Get All Materials (Filterable)
-// export const getAllMaterials = async (req, res) => {
-//   try {
-//     const { courseName, subjectName, topicName } = req.query;
-//     const filter = {};
-    
-//     if (courseName) filter.courseName = courseName;
-//     if (subjectName) filter.subjectName = subjectName;
-//     if (topicName) filter.topicName = topicName;
-
-//     const materials = await StudyMaterial.find(filter)
-//       .sort({ uploadedAt: -1 });
-
-//     res.json({ success: true, materials });
-
-//   } catch (err) {
-//     console.error("Fetch Error:", err);
-//     res.status(500).json({ error: "Failed to fetch materials" });
-//   }
-// };
-
-// // 7. Get Single Material
-// export const getMaterialById = async (req, res) => {
-//   try {
-//     const material = await StudyMaterial.findById(req.params.id);
-//     if (!material) return res.status(404).json({ error: "Material not found" });
-//     res.json({ success: true, material });
-//   } catch (err) {
-//     console.error("Fetch Error:", err);
-//     res.status(500).json({ error: "Failed to fetch material" });
-//   }
-// };
-
-// // 8. Delete Entire Topic
-// export const deleteTopic = async (req, res) => {
-//   try {
-//     const material = await StudyMaterial.findById(req.params.id);
-//     if (!material) return res.status(404).json({ error: "Material not found" });
-
-//     // Delete all files from GridFS
-//     await Promise.all(
-//       material.files.map(file => 
-//         bucket.delete(new mongoose.Types.ObjectId(file.fileId))
-//       )
-//     );
-
-//     // Delete document
-//     await material.deleteOne();
-//     res.json({ success: true });
-
-//   } catch (err) {
-//     console.error("Delete Error:", err);
-//     res.status(500).json({ error: "Failed to delete topic" });
-//   }
-// };

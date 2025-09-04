@@ -1,19 +1,13 @@
-// import express from 'express';
-// import { saveTestResult, getUserTestResults } from '../controllers/testController.js';
-
-// const router = express.Router();
-
-// router.post('/test/save', saveTestResult);
-// router.get('/test/history/:userId', getUserTestResults);
-
-// export default router;
 // routes/testRoutes.js
 import express from "express";
-import {  submitTest} from "../controllers/testController.js";
-import { verifyUser } from "../middleware/auth.js";
+import { protect } from "../middleware/auth.js";
+import { validateRequest as validate } from "../middleware/validateRequest.js";
+import { submitTest } from "../controllers/testController.js";
+import { submitTestSchema } from "../validation/testSchemas.js";
 
 const router = express.Router();
 
-router.post("/submit", verifyUser, submitTest);
+// Submit + auto-save (and enforce attempts if Chapter has attemptLimit)
+router.post("/submit", protect, validate(submitTestSchema), submitTest);
 
 export default router;

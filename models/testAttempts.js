@@ -1,39 +1,26 @@
-// models/TestAttempt.js
-import mongoose from 'mongoose';
+import mongoose from "mongoose";
 
-// const testAttemptSchema = new mongoose.Schema({
-//   userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
-//   subject: { type: String, required: true },
-//   chapter: { type: String, required: true },
-//   questions: [
-//     {
-//       question: String,
-//       options: [String],
-//       selectedAnswer: Number,
-//       correctAnswer: Number
-//     }
-//   ],
-//   score: { type: Number, required: true },
-//   total: { type: Number, required: true },
-//   attemptedAt: { type: Date, default: Date.now }
-// });
+const testAttemptSchema = new mongoose.Schema(
+  {
+    user:      { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
+    courseId:  { type: mongoose.Schema.Types.ObjectId, ref: "Course", required: true },
+    subjectId: { type: mongoose.Schema.Types.ObjectId, ref: "Subject", required: true },
+    chapterId: { type: mongoose.Schema.Types.ObjectId, ref: "Chapter" },
 
-// export default mongoose.model('TestAttempt', testAttemptSchema);
+    // keep enum consistent with TestResult & controller
+    testType:  { 
+      type: String, 
+      enum: ["chapter", "mock", "free", "master", "manual"], 
+      default: "chapter" 
+    },
 
-const testAttemptSchema = new mongoose.Schema({
-  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
-  subject: { type: String, required: true },
-  chapter: { type: String, required: true },
-  questions: [
-    {
-      question: String,
-      options: [String],
-      selectedAnswer: Number,
-      correctAnswer: Number
-    }
-  ],
-  score: { type: Number, required: true },
-  total: { type: Number, required: true },
-  attemptedAt: { type: Date, default: Date.now }
-});
-export default mongoose.model('TestAttempt', testAttemptSchema);
+    attemptCount: { type: Number, default: 0 },
+    attemptedAt:  { type: Date, default: Date.now }
+  },
+  { timestamps: true }
+);
+
+// quick lookup to count attempts
+testAttemptSchema.index({ user: 1, courseId: 1, subjectId: 1, chapterId: 1, testType: 1 });
+
+export default mongoose.model("TestAttempt", testAttemptSchema);

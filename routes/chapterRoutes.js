@@ -1,19 +1,20 @@
 import express from "express";
-import {
-  createOrUpdateChapter,
-  getAllChapters,
-  deleteChapter,
-} from "../controllers/chapterController.js";
+import { createOrUpdateChapter, getAllChapters, deleteChapter, getChaptersByCourseAndSubject } from "../controllers/chapterController.js";
+import {validateRequest as validate} from "../middleware/validateRequest.js";
+import { protect, verifyAdmin } from "../middleware/auth.js";
+import { createOrUpdateChapterSchema, getAllChaptersSchema, deleteChapterSchema } from "../validation/chapterSchemas.js";
 
 const router = express.Router();
 
-// POST: Add or update
-router.post("/", createOrUpdateChapter);
+// Admin-only create/update
+router.post("/", verifyAdmin, validate(createOrUpdateChapterSchema), createOrUpdateChapter);
 
-// GET: All chapters
-router.get("/", getAllChapters);
+// Get chapters (any authenticated user)
+router.get("/", protect, validate(getAllChaptersSchema), getAllChapters);
 
-// DELETE: Delete by ID
-router.delete("/:id", deleteChapter);
+// Delete chapter (admin only)
+router.delete("/:id", verifyAdmin, validate(deleteChapterSchema), deleteChapter);
+
+router.get("/:courseId/:subjectId", getChaptersByCourseAndSubject);
 
 export default router;

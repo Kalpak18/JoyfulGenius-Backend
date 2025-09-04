@@ -1,6 +1,5 @@
-// routes/materials.routes.js
-// routes/materials.routes.js
-import { Router } from "express";
+import express from "express";
+import multer from "multer";
 import upload from "../middleware/Upload.js";
 import {
   createMaterial,
@@ -8,79 +7,45 @@ import {
   getMaterial,
   streamMaterial,
   downloadMaterial,
-  deleteMaterial,
-} from "../controllers/StudyMaterialController.js"; // <- make sure filename 
-// matches
-import { verifyAdmin } from '../middleware/auth.js';
-const router = Router();
+  deleteMaterial
+} from "../controllers/StudyMaterialController.js";
+import { validateRequest as validate } from "../middleware/validateRequest.js";
+import {
+  createMaterialSchema,
+  getMaterialSchema,
+  streamMaterialSchema,
+  downloadMaterialSchema,
+  deleteMaterialSchema
+} from "../validation/studyMaterialSchemas.js";
+import { verifyAdmin } from "../middleware/auth.js";
+import handleMulterError from "../middleware/HandleMulterError.js";
 
-// List all materials
-router.get("/", listMaterials); // frontend calls GET /api/materials
+// const upload = multer({ storage: multer.memoryStorage() });
+const router = express.Router();
 
-// Create/upload material
-router.post("/",verifyAdmin, upload.single("file"), createMaterial); // frontend calls POST /api/materials
+// Create
+router.post(
+  "/",
+  verifyAdmin,
+  upload.single("file"),
+  validate(createMaterialSchema),
+  handleMulterError,
+  createMaterial
+);
 
-// Get single material info
-router.get("/:id", getMaterial);
+// List grouped materials
+router.get("/", listMaterials);
 
-// Stream PDF/video inline
-router.get("/:id/stream", streamMaterial);
+// Get single material
+router.get("/:id", validate(getMaterialSchema), getMaterial);
 
-// Download (if allowed)
-router.get("/:id/download", downloadMaterial);
+// Stream file
+router.get("/:id/stream", validate(streamMaterialSchema), streamMaterial);
+
+// Download file
+router.get("/:id/download", validate(downloadMaterialSchema), downloadMaterial);
 
 // Delete material
-router.delete("/:id", deleteMaterial);
+router.delete("/:id", verifyAdmin, validate(deleteMaterialSchema), deleteMaterial);
 
 export default router;
-
-
-
-
-
-
-// import express from 'express';
-// import {
-//   uploadMaterial,
-//   removeFile,
-//   replaceFile,
-//   removeYouTubeLink,
-//   getFile,
-//   getAllMaterials,
-//   getMaterialById,
-//   deleteTopic
-// } from '../controllers/StudyMaterialController.js';
-// import upload from '../middleware/Upload.js';
-// import { verifyAdmin } from '../middleware/auth.js';
-
-// const router = express.Router();
-
-// // ---------------------- ADMIN ROUTES ---------------------- //
-// router.post(
-//   '/upload',
-//   verifyAdmin,
-//   upload.array('files', 10), // Max 10 files
-//   uploadMaterial
-// );
-
-// router.delete('/:id/file/:fileId', verifyAdmin, removeFile);
-
-// router.put(
-//   '/:id/file/:fileId',
-//   verifyAdmin,
-//   upload.single('file'), // Single file for replacement
-//   replaceFile
-// );
-
-// router.delete('/:id/youtube/:linkIndex', verifyAdmin, removeYouTubeLink);
-
-// router.delete('/:id', verifyAdmin, deleteTopic);
-
-// // ---------------------- PUBLIC ROUTES ---------------------- //
-// router.get('/:id/file/:fileId', getFile);
-
-// router.get('/', getAllMaterials); // ?courseName=&subjectName=&topicName=
-
-// router.get('/:id', getMaterialById);
-
-// export default router;

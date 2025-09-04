@@ -1,19 +1,47 @@
-import express from 'express';
-import { loginAdmin, getPaidUsers, getAllUsers, updateUser, deleteUser, getAdminStats, getUserTestResults } from '../controllers/AdminController.js';
-import { verifyAdmin } from '../middleware/auth.js';
+import express from "express";
+import {
+  loginAdmin,
+  refreshAdminAccessToken,
+  logoutAdmin,
+  getPaidUsers,
+  getAllUsers,
+  updateUser,
+  deleteUser,
+  getAdminStats,
+  getUserTestResults
+} from "../controllers/AdminController.js";
+import { validateRequest as validate } from "../middleware/validateRequest.js";
+import { verifyAdmin } from "../middleware/auth.js";
+import {
+  loginAdminSchema,
+  updateUserSchema,
+  deleteUserSchema,
+  getUserTestResultsSchema
+} from "../validation/adminSchemas.js";
 
 const router = express.Router();
 
-router.post('/login', loginAdmin);
-router.get('/paid-users', verifyAdmin, getPaidUsers); // (optional, kept as-is)
-router.get('/users', verifyAdmin, getAllUsers);       // ✅ New route
-// PUT - Update user
-router.put('/users/:id', verifyAdmin, updateUser);
+// Public admin login
+router.post("/login", validate(loginAdminSchema), loginAdmin);
+router.post("/refresh", refreshAdminAccessToken);
+router.post("/logout", logoutAdmin);
 
-// DELETE - Delete user
-router.delete('/users/:id', verifyAdmin, deleteUser);
+// Protected admin routes
+router.get("/paid-users", verifyAdmin, getPaidUsers);
+router.get("/users", verifyAdmin, getAllUsers);
+
+router.patch("/users/:id", verifyAdmin, validate(updateUserSchema), updateUser);
+
+router.delete("/users/:id", verifyAdmin, validate(deleteUserSchema), deleteUser);
+
+
 router.get("/stats", verifyAdmin, getAdminStats);
-router.get('/user-tests/:userId', verifyAdmin, getUserTestResults);
 
+router.get(
+  "/users/:userId/results",
+  verifyAdmin,
+  validate(getUserTestResultsSchema),
+  getUserTestResults
+);
 
 export default router;

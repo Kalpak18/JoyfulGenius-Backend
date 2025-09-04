@@ -1,13 +1,16 @@
-// export const uri = process.env.MONGODB_URI || 'mongodb://localhost:27017/nmms-platform';
+
 // config/db.js
 import mongoose from 'mongoose';
+import { env } from './validateEnv.js';
+
+const { MONGO_URI} = env;
 
 const connectDB = async () => {
   try {
-    await mongoose.connect(process.env.MONGO_URI);
+    await mongoose.connect(MONGO_URI);
     console.log("✅ Connected to MongoDB");
   } catch (error) {
-    console.error('DB Connection Error:', error.message);
+    console.error('❌ DB Connection Error:', error.message);
     process.exit(1);
   }
 };

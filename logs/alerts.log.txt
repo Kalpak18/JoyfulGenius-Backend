@@ -1,0 +1,7 @@
+C:\Users\kalpa\OneDrive\Desktop\JoyfulGenius\New JG\Backend\logs\20250822-0000-01-alerts.log
+C:\Users\kalpa\OneDrive\Desktop\JoyfulGenius\New JG\Backend\logs\20250823-0000-01-alerts.log
+C:\Users\kalpa\OneDrive\Desktop\JoyfulGenius\New JG\Backend\logs\20250825-0000-01-alerts.log
+C:\Users\kalpa\OneDrive\Desktop\JoyfulGenius\New JG\Backend\logs\20250827-0000-01-alerts.log
+C:\Users\kalpa\OneDrive\Desktop\JoyfulGenius\New JG\Backend\logs\20250901-0008-01-alerts.log
+C:\Users\kalpa\OneDrive\Desktop\JoyfulGenius\New JG\Backend\logs\20250902-2008-01-alerts.log
+C:\Users\kalpa\OneDrive\Desktop\JoyfulGenius\New JG\Backend\logs\20250903-1110-01-alerts.log

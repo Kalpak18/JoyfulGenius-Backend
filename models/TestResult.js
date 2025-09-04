@@ -1,46 +1,41 @@
-// Backend/models/TestResult.js
- import mongoose from 'mongoose';
+import mongoose from "mongoose";
 
-// const testResultSchema = new mongoose.Schema({
-//   user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
-//   subject: { type: String, required: true },
-//   chapter: { type: String, required: true },
-//   score: { type: Number, required: true },
-//   total: { type: Number, required: true },
-//   submittedAt: { type: Date, default: Date.now },
-// });
+const detailSchema = new mongoose.Schema(
+  {
+    question:      { type: String, required: true },
+    options:       { type: [String], required: true },
+    correctAnswer: { type: Number, required: true, min: 0, max: 3 },
+    userAnswer:    { type: Number, required: true, min: 0, max: 3 },
+    isCorrect:     { type: Boolean, required: true },
+  },
+  { _id: false }
+);
 
-// export default mongoose.model('TestResult', testResultSchema);
-// const testResultSchema = new mongoose.Schema({
-//   userId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
-//   subject: { type: String },
-//   chapter: { type: String },
-//   testName: { type: String }, // For manual entries
-//   total: { type: Number, required: true },
-//   score: { type: Number, required: true },
-//   isManual: { type: Boolean, default: false },
-//   submittedAt: { type: Date, default: Date.now },
-// });
+const testResultSchema = new mongoose.Schema(
+  {
+    user:      { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
+    courseId:  { type: mongoose.Schema.Types.ObjectId, ref: "Course" }, // optional for free/manual
+    subjectId: { type: mongoose.Schema.Types.ObjectId, ref: "Subject", required: true },
+    chapterId: { type: mongoose.Schema.Types.ObjectId, ref: "Chapter" }, // required only for chapter tests
 
-// export default mongoose.model("TestResult", testResultSchema);
+    score:     { type: Number, required: true, min: 0 },
+    total:     { type: Number, required: true, min: 1 },
 
-// models/TestResult.js
-const testResultSchema = new mongoose.Schema({
-  user: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
-  subject: String,
-  chapter: String,
-  score: Number,
-  total: Number,
-  type: { type: String, default: "chapter" }, // new field for manual/mock
-  details: [
-    {
-      question: String,
-      options: [String],
-      correctAnswer: Number,
-      userAnswer: Number,
-      isCorrect: Boolean,
+    testType:  { 
+      type: String, 
+      enum: ["chapter", "mock", "free", "master", "manual"], // ✅ manual included again
+      default: "chapter" 
     },
-  ],
-}, { timestamps: true });
+
+    details:   { type: [detailSchema], default: [] },
+  },
+  { timestamps: true }
+);
+
+// helpful for per-user history screens
+testResultSchema.index({ user: 1, createdAt: -1 });
+
+// quick lookups for analytics (“how did this user do in this chapter”)
+testResultSchema.index({ user: 1, courseId: 1, chapterId: 1, createdAt: -1 });
 
 export default mongoose.model("TestResult", testResultSchema);
