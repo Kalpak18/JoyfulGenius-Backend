@@ -22,11 +22,6 @@ export const env = cleanEnv(process.env, {
   EMAIL_USER:      str(),
   EMAIL_PASS:      str(),
 
-  SUPABASE_URL:            url(),
-  SUPABASE_KEY:            str(),
-  SUPABASE_BUCKET:         str(),
-  SUPABASE_SERVICE_ROLE_KEY: str(),
-
   TWILIO_ACCOUNT_SID: str(),
   TWILIO_AUTH_TOKEN:  str(),
   TWILIO_SERVICE_SID: str(),
