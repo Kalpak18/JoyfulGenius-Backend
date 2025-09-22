@@ -1,6 +1,6 @@
 // controllers/questionController.js
 import Course from "../models/Course.js";
-import Subject from "../models/Subject.js";
+import Subject from "../models/subject.js";
 import Chapter from "../models/chapter.js";
 import Question from "../models/question.js";
 
