@@ -12,7 +12,7 @@ import {
   // getUsersByCourse,
   updateUserInCourse,
   removeUserFromCourse
-} from "../controllers/courseController.js";
+} from "../controllers/CourseController.js";
 
 import {
   createCourseSchema,
