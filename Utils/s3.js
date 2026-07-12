@@ -60,6 +60,7 @@ export async function presignUpload({ kind, filename, contentType, expiresIn = 3
     Bucket:      AWS_S3_BUCKET,
     Key:         key,
     ContentType: contentType,
+    // No ACL needed — bucket policy grants public GetObject for images/, thumbnails/, videos/
   });
   const uploadUrl = await getSignedUrl(client, cmd, { expiresIn });
 
