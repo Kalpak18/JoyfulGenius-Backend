@@ -4,84 +4,98 @@ import { protect, verifyAdmin, verifyUser } from "../middleware/auth.js";
 import {
   registerUser,
   verifyUserOtp,
+  resendRegistrationOtp,
   loginUser,
   refreshToken,
   logout,
-  forgotPasswordMobile,
-  verifyResetOtp,
   forgotPassword,
   resetPassword,
   getUserProfile,
   updateEmail,
   deleteAccount,
-  togglePaidStatusForCourse,
+  exportMyData,
   getCurrentUser,
-  markUserPaidForCourse, 
-  unmarkUserPaidForCourse,
   getUsersByCourse,
   updateCourseProgress,
   updateCourseTestResult,
-  trackCourseVisit
+  trackCourseVisit,
+  saveProgress,
+  getProgress,
+  getProgressSummary,
+  addBookmark,
+  removeBookmark,
+  listBookmarks,
+  issueCertificate,
+  listCertificates,
+  isHandleAvailable,
+  setMyHandle,
 } from "../controllers/usercontroller.js";
 
 import { validateRequest as validate }  from "../middleware/validateRequest.js";
 import {
   registerUserSchema,
   verifyUserOtpSchema,
+  resendRegistrationOtpSchema,
   loginUserSchema,
-  forgotPasswordMobileSchema,
-  verifyResetOtpSchema,
   forgotPasswordSchema,
   resetPasswordSchema,
   updateEmailSchema,
-  markPaidForCourseSchema, 
-  unmarkPaidForCourseSchema,
-  togglePaidStatusForCourseSchema,
   getCurrentUserSchema
 } from "../validation/userSchemas.js";
 
 const router = express.Router();
 
 // ---------- Public Routes ----------
-router.post("/register", validate(registerUserSchema), registerUser);
-router.post("/verify-otp", validate(verifyUserOtpSchema), verifyUserOtp);
-router.post("/login", validate(loginUserSchema), loginUser);
+// Registration is a two-step flow:
+//   1. POST /register        → server emails an OTP
+//   2. POST /verify-email-otp → user submits OTP, User created, auto-login
+router.post("/register",          validate(registerUserSchema),           registerUser);
+router.post("/verify-email-otp",  validate(verifyUserOtpSchema),          verifyUserOtp);
+router.post("/resend-otp",        validate(resendRegistrationOtpSchema),  resendRegistrationOtp);
 
-router.post("/forgot-password/mobile", validate(forgotPasswordMobileSchema), forgotPasswordMobile);
-router.post("/verify-reset-otp", validate(verifyResetOtpSchema), verifyResetOtp);
-router.post("/forgot-password", validate(forgotPasswordSchema), forgotPassword);
-router.post("/reset-password/:token", validate(resetPasswordSchema), resetPassword);
+router.post("/login",             validate(loginUserSchema),              loginUser);
+
+// Forgot password is email-only (Twilio removed)
+router.post("/forgot-password",            validate(forgotPasswordSchema), forgotPassword);
+router.post("/reset-password/:token",      validate(resetPasswordSchema),  resetPassword);
 
 // Refresh uses HttpOnly cookie
 router.post("/auth/refresh", refreshToken);
 
 // ---------- Protected-ish Routes ----------
 router.post("/logout",  logout);
-// Prefer /current in frontend, keep /me for internal/debug
-router.get("/me", protect, getUserProfile);
-router.get("/current", verifyUser, validate(getCurrentUserSchema), getCurrentUser);
 
+// Platform handle (Instagram-style username)
+router.get  ("/handle-available", isHandleAvailable);
+router.patch("/me/handle",        protect, setMyHandle);
 
-router.patch("/email", protect, validate(updateEmailSchema), updateEmail);
+router.get("/me",       protect,    getUserProfile);
+router.get("/current",  verifyUser, validate(getCurrentUserSchema), getCurrentUser);
+
+router.patch("/email",    protect, validate(updateEmailSchema), updateEmail);
 router.delete("/account", protect, deleteAccount);
+router.get("/my-data",    protect, exportMyData);  // GDPR data export
 
-// ---------- Payment / Admin-ish Routes ----------
+// ---------- Per-course enrollment endpoints ----------
+// (Manual mark-paid endpoints were retired. Paid status now only flips via
+// verified Razorpay payment or admin /api/admin/grant-access.)
+router.post("/track-course/:userId/:courseId", protect,     trackCourseVisit);
+router.get  ("/course/:courseId",              verifyAdmin, getUsersByCourse);
+router.put  ("/admin/user/:userId/course/:courseId/progress", verifyAdmin, updateCourseProgress);
+router.put  ("/admin/user/:userId/course/:courseId/test",     verifyAdmin, updateCourseTestResult);
 
-router.post("/:userId/course/:courseId/markPaid", verifyAdmin, validate(markPaidForCourseSchema), markUserPaidForCourse);
-router.post("/:userId/course/:courseId/unmarkPaid", verifyAdmin, validate(unmarkPaidForCourseSchema), unmarkUserPaidForCourse);
-router.post("/:userId/course/:courseId/togglePaid", verifyAdmin, validate(togglePaidStatusForCourseSchema), togglePaidStatusForCourse);
+// ── Lecture progress + resume tracking (student self-service) ──
+router.patch("/me/progress",              protect, saveProgress);
+router.get  ("/me/progress/:courseId",    protect, getProgress);
+router.get  ("/me/progress-summary",      protect, getProgressSummary);
 
-// router.post("/mark-paid", verifyAdmin, validate(markPaidForCourseSchema), markUserPaidForCourse);
-// router.post("/unmark-paid", verifyAdmin, validate(unmarkPaidForCourseSchema), unmarkUserPaidForCourse);
-// router.patch("/:userId/toggle-paid", verifyAdmin, validate(togglePaidStatusForCourseSchema), togglePaidStatusForCourse);
+// ── Bookmarks ──
+router.get   ("/me/bookmarks",              protect, listBookmarks);
+router.post  ("/me/bookmarks",              protect, addBookmark);
+router.delete("/me/bookmarks/:lectureId",   protect, removeBookmark);
 
-router.post("/track-course/:userId/:courseId", protect, trackCourseVisit);
-router.get("/course/:courseId", verifyAdmin, getUsersByCourse);
-router.put("/admin/user/:userId/course/:courseId/progress", verifyAdmin, updateCourseProgress);
-router.put("/admin/user/:userId/course/:courseId/test", verifyAdmin, updateCourseTestResult);
-
-
+// ── Certificates ──
+router.get  ("/me/certificates",                  protect, listCertificates);
+router.post ("/me/certificates/:courseId/issue",  protect, issueCertificate);
 
 export default router;
-
-

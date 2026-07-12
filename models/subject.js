@@ -16,6 +16,11 @@ const subjectSchema = new mongoose.Schema(
       type: String,
       trim: true,
       default: '',
+    },
+    thumbnailUrl: {
+      type: String,
+      trim: true,
+      default: '',
     }
   },
   { timestamps: true }

@@ -1,63 +1,3 @@
-// import Chapter from "../models/chapter.js";
-// import TestAttempt from "../models/testAttempts.js";
-
-// // POST: Create or update chapter
-// export const createOrUpdateChapter = async (req, res) => {
-//   try {
-//     const {
-//       courseId,
-//       subjectId,
-//       title,
-//       language,
-//       youtubeCode,
-//       freetestCode,
-//       mastertestCode,
-//       attemptLimit
-//     } = req.body;
-
-//     // Build update object dynamically
-//     const updateData = {
-//       language,
-//       youtubeCode,
-//       freetestCode,
-//       mastertestCode,
-//     };
-
-//     if (attemptLimit !== undefined) {
-//       updateData.attemptLimit = attemptLimit === null ? null : Number(attemptLimit);
-//     }
-
-//     const chapter = await Chapter.findOneAndUpdate(
-//       { courseId, subjectId, title },
-//       updateData,
-//       { new: true, upsert: true, runValidators: true }
-//     );
-
-//     // If lowering limit, also adjust TestAttempt records for THIS chapter
-//     if (attemptLimit !== undefined && attemptLimit !== null) {
-//       await TestAttempt.updateMany(
-//         {
-//           courseId,
-//           subjectId,
-//           chapterId: chapter._id,
-//           attemptCount: { $gt: attemptLimit }
-//         },
-//         { $set: { attemptCount: attemptLimit } }
-//       );
-//     }
-
-//     res.status(200).json({ message: "Chapter saved", chapter });
-//   } catch (error) {
-//     if (error.code === 11000) {
-//       return res
-//         .status(400)
-//         .json({ message: "Chapter with this subject & title already exists in this course" });
-//     }
-//     console.error("Error saving chapter:", error);
-//     res.status(500).json({ message: "Server error" });
-//   }
-// };
-
 import mongoose from "mongoose";
 import Chapter from "../models/chapter.js";
 import TestAttempt from "../models/testAttempts.js";
@@ -72,7 +12,9 @@ export const createOrUpdateChapter = async (req, res) => {
       title,
       language,
       youtubeCode,
+      freetestType,
       freetestCode,
+      mastertestType,
       mastertestCode,
       attemptLimit
     } = req.body;
@@ -87,9 +29,11 @@ export const createOrUpdateChapter = async (req, res) => {
     // Build dynamic update object
     const updateData = {
       language,
-      youtubeCode: youtubeCode || "",
-      freetestCode: freetestCode || "",
-      mastertestCode: mastertestCode || ""
+      youtubeCode:     youtubeCode     || "",
+      freetestType:    freetestType    || "external",
+      freetestCode:    freetestCode    || "",
+      mastertestType:  mastertestType  || "external",
+      mastertestCode:  mastertestCode  || "",
     };
 
     if (attemptLimit !== undefined && attemptLimit !== null) {
@@ -134,27 +78,47 @@ export const createOrUpdateChapter = async (req, res) => {
 };
 
 
+// PUT: Update chapter by ID
+export const updateChapter = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const {
+      courseId, subjectId, title, language, youtubeCode,
+      freetestType, freetestCode, mastertestType, mastertestCode, attemptLimit
+    } = req.body;
+
+    const updateData = {
+      ...(courseId    && { courseId }),
+      ...(subjectId   && { subjectId }),
+      ...(title       && { title }),
+      ...(language    && { language }),
+      youtubeCode:     youtubeCode     ?? "",
+      freetestType:    freetestType    || "external",
+      freetestCode:    freetestType === "inapp" ? "" : (freetestCode    || ""),
+      mastertestType:  mastertestType  || "external",
+      mastertestCode:  mastertestType === "inapp" ? "" : (mastertestCode || ""),
+      attemptLimit:    attemptLimit != null ? Number(attemptLimit) : null,
+    };
+
+    const chapter = await Chapter.findByIdAndUpdate(id, updateData, { new: true, runValidators: true });
+    if (!chapter) return res.status(404).json({ message: "Chapter not found" });
+    res.status(200).json({ message: "Chapter updated", chapter });
+  } catch (err) {
+    console.error("Error updating chapter:", err);
+    if (err.code === 11000) return res.status(400).json({ message: "A chapter with this title already exists for this course & subject" });
+    res.status(500).json({ message: "Server error", error: err.message });
+  }
+};
+
 // GET: All chapters for a course (optional filters)
 export const getAllChapters = async (req, res) => {
   try {
     const { courseId, subjectId , subjectName } = req.query;
 
     const filter = {};
-    // if (courseId) filter.courseId = courseId;
-    // if (subjectId) filter.subjectId = subjectId;
-
-      if (courseId && courseId.toString() === "YOUR_NMMS_COURSE_ID") {
-      if (subjectId) {
-        filter.courseId = courseId;
-        filter.subjectId = subjectId;
-      }
-    }
-     // Case 2: Generic dynamic (non-NMMS)
-    else {
-      if (subjectName) filter.title = new RegExp(subjectName, "i");
-      if (courseId) filter.courseId = courseId;
-      if (subjectId) filter.subjectId = subjectId;
-    }
+    if (subjectName) filter.title = new RegExp(subjectName, "i");
+    if (courseId)    filter.courseId  = courseId;
+    if (subjectId)   filter.subjectId = subjectId;
     
     const chapters = await Chapter.find(filter)
       .populate("courseId", "name")   // populate course name
@@ -166,9 +130,11 @@ export const getAllChapters = async (req, res) => {
       _id: ch._id,
       title: ch.title,
       language: ch.language,
-      youtubeCode: ch.youtubeCode,
-      freetestCode: ch.freetestCode,
-      mastertestCode: ch.mastertestCode,
+      youtubeCode:     ch.youtubeCode,
+      freetestType:    ch.freetestType    || "external",
+      freetestCode:    ch.freetestCode,
+      mastertestType:  ch.mastertestType  || "external",
+      mastertestCode:  ch.mastertestCode,
       attemptLimit: ch.attemptLimit,
       courseName: ch.courseId?.name ?? "N/A",
       subjectName: ch.subjectId?.name ?? "N/A",
@@ -207,7 +173,7 @@ export const getChaptersByCourseAndSubject = async (req, res) => {
 
     res.status(200).json(chapters);
   } catch (error) {
-    console.error("Error fetching NMMS chapters:", error);
-    res.status(500).json({ message: "Error fetching NMMS chapters" });
+    console.error("Error fetching chapters:", error);
+    res.status(500).json({ message: "Error fetching chapters" });
   }
 };

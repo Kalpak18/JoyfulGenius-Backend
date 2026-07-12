@@ -1,7 +1,1 @@
-C:\Users\kalpa\OneDrive\Desktop\JoyfulGenius\New JG\Backend\logs\20250823-0000-01-security.log
-C:\Users\kalpa\OneDrive\Desktop\JoyfulGenius\New JG\Backend\logs\20250825-0000-01-security.log
-C:\Users\kalpa\OneDrive\Desktop\JoyfulGenius\New JG\Backend\logs\20250827-0000-01-security.log
-C:\Users\kalpa\OneDrive\Desktop\JoyfulGenius\New JG\Backend\logs\20250901-0008-01-security.log
-C:\Users\kalpa\OneDrive\Desktop\JoyfulGenius\New JG\Backend\logs\20250902-2008-01-security.log
-C:\Users\kalpa\OneDrive\Desktop\JoyfulGenius\New JG\Backend\logs\20250903-1110-01-security.log
-C:\Users\kalpa\OneDrive\Desktop\JoyfulGenius\New JG\Backend\logs\20250919-0000-01-security.log
+C:\Users\kalpa\Desktop\JoyfulGenius\JoyfulGenius-Backend\logs\20260708-0000-01-security.log

@@ -1,5 +1,6 @@
 // controllers/authController.js
 import User from "../models/User.js";
+import Course from "../models/Course.js";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { env } from "../config/validateEnv.js";
@@ -37,76 +38,7 @@ const setRefreshCookie = (res, token) => {
   });
 };
 
-// ==========================
-// Login User
-// ==========================
-// ==========================
-// Login User
-// ==========================
-// export const loginUser = async (req, res) => {
-//   const { identifier, password } = req.body;
-
-//   try {
-//     if (!identifier || !password) {
-//       return res
-//         .status(400)
-//         .json({ message: "Email/Mobile and password are required" });
-//     }
-
-//     // Determine query type (email or mobile)
-//     let query = null;
-//     if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(identifier)) {
-//       query = { email: identifier.toLowerCase().trim() };
-//     } else if (/^\d{10}$/.test(identifier)) {
-//       query = { whatsappNo: identifier.trim() };
-//     } else {
-//       return res
-//         .status(400)
-//         .json({ message: "Please enter a valid email or 10-digit mobile number" });
-//     }
-
-//     // Fetch user with password + tokenVersion for auth
-//     const user = await User.findOne(query).select("+password +tokenVersion paidCourses");
-
-//     if (!user) {
-//       return res.status(404).json({ message: "User not found" });
-//     }
-
-//     // Check password
-//     if (!user.password) {
-//       console.warn("User exists but has no password:", user._id);
-//       return res.status(401).json({ message: "Invalid credentials" });
-//     }
-
-//     const isMatch = await bcrypt.compare(password, user.password);
-//     if (!isMatch) {
-//       return res.status(401).json({ message: "Invalid credentials" });
-//     }
-
-//     // Issue tokens
-//     const accessToken = signAccessToken(user);
-//     const refreshToken = signRefreshToken(user);
-//     setRefreshCookie(res, refreshToken);
-
-//     res.status(200).json({
-//       message: "Login successful",
-//       accessToken,
-//       user: {
-//         id: user._id,
-//         name: `${user.f_name} ${user.last_name}`.trim(),
-//         email: user.email,
-//         whatsappNo: user.whatsappNo,
-//         district: user.district,
-//         isPaid: user.isPaid || false,
-//         paidCourses: Array.isArray(user.paidCourses) ? user.paidCourses : [],
-//       },
-//     });
-//   } catch (err) {
-//     console.error("Login error:", err);
-//     res.status(500).json({ message: "Server error during login" });
-//   }
-// };
-
+// Login lives in controllers/usercontroller.js#loginUser.
 
 // ==========================
 // Refresh Access Token

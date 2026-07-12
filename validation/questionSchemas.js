@@ -8,39 +8,43 @@ const optionsSchema = z
   .array(z.string().min(1, "Option cannot be empty"))
   .length(4, "Exactly 4 options are required");
 
+const optionImagesSchema = z
+  .array(z.string())
+  .length(4)
+  .optional();
+
+const imageUrl = z.string().optional().default("");
+
 // Add Question
 export const addQuestionSchema = z.object({
   body: z.object({
-    subjectId: objectId,
-    chapterId: objectId,
-    question: z.string().min(5, "Question must be at least 5 characters long"),
-    options: optionsSchema,
-    correctAnswer: z
-      .number()
-      .int("Must be an integer")
-      .min(0, "Index must be between 0 and 3")
-      .max(3, "Index must be between 0 and 3"),
-    course: objectId.optional()
+    subjectId:     objectId,
+    chapterId:     objectId,
+    courseId:      objectId.optional(),
+    question:      z.string().min(1, "Question is required"),
+    questionImage: imageUrl,
+    options:       optionsSchema,
+    optionImages:  optionImagesSchema,
+    correctAnswer: z.number().int().min(0).max(3),
+    explanation:   z.string().max(2000).optional().default(""),
+    course:        objectId.optional(),
   })
 });
 
 // Update Question
 export const updateQuestionSchema = z.object({
-  params: z.object({
-    id: objectId
-  }),
+  params: z.object({ id: objectId }),
   body: z.object({
-    subjectId: objectId.optional(),
-    chapterId: objectId.optional(),
-    question: z.string().min(5).optional(),
-    options: optionsSchema.optional(),
-    correctAnswer: z
-      .number()
-      .int()
-      .min(0)
-      .max(3)
-      .optional(),
-    course: objectId.optional()
+    subjectId:     objectId.optional(),
+    chapterId:     objectId.optional(),
+    courseId:      objectId.optional(),
+    question:      z.string().min(1).optional(),
+    questionImage: imageUrl,
+    options:       optionsSchema.optional(),
+    optionImages:  optionImagesSchema,
+    correctAnswer: z.number().int().min(0).max(3).optional(),
+    explanation:   z.string().max(2000).optional(),
+    course:        objectId.optional(),
   })
 });
 

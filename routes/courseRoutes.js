@@ -1,47 +1,53 @@
 import express from "express";
 import { protect, verifyAdmin } from "../middleware/auth.js";
+import { requireCourseScope, requireCourseScopeBy } from "../middleware/tutorScope.js";
 import { validateRequest as validate } from "../middleware/validateRequest.js";
 import {
   createCourse,
   getCourses,
+  getPublicCourses,
+  listCoursesForAdmin,
   updateCourse,
   deleteCourse,
   enrollUser,
- getCoursesForUser,
+  getCoursesForUser,
   getCourseByNameForUser,
-  // getUsersByCourse,
+  getCourseAccess,
   updateUserInCourse,
-  removeUserFromCourse
+  removeUserFromCourse,
 } from "../controllers/CourseController.js";
 
 import {
   createCourseSchema,
   updateCourseSchema,
   deleteCourseSchema,
-  enrollUserSchema
+  enrollUserSchema,
 } from "../validation/courseSchemas.js";
 
 const router = express.Router();
 
-router.post("/", verifyAdmin, validate(createCourseSchema), createCourse);
-router.get("/", protect, getCourses);
-router.put("/:courseId", verifyAdmin, validate(updateCourseSchema), updateCourse);
-router.delete("/:courseId", verifyAdmin, validate(deleteCourseSchema), deleteCourse);
-router.post("/visit-course", protect, validate(enrollUserSchema), enrollUser);
+// Public — no auth needed (slug, name, thumbnailUrl only)
+router.get("/public", getPublicCourses);
 
+// Admin list (drafts + archived included). Must come before any path that could match.
+router.get("/admin/list", verifyAdmin, listCoursesForAdmin);
 
-router.get("/user/courses", protect, getCoursesForUser);               // fetch all courses for user with paid status
+// Public student-facing routes
+router.get   ("/",          protect,     getCourses);
+// Course creation → only admin role (course owners). Developers manage accounts, not content.
+// Tutors can't spawn courses either — controller enforces role check.
+router.post  ("/",          verifyAdmin, validate(createCourseSchema),  createCourse);
+router.put   ("/:courseId", verifyAdmin, requireCourseScopeBy({ kind: "course", paramKey: "courseId" }), validate(updateCourseSchema),  updateCourse);
+router.delete("/:courseId", verifyAdmin, requireCourseScopeBy({ kind: "course", paramKey: "courseId" }), validate(deleteCourseSchema),  deleteCourse);
+router.post  ("/visit-course", protect, validate(enrollUserSchema),     enrollUser);
+
+router.get("/user/courses",            protect, getCoursesForUser);
 router.get("/user/course/:coursename", protect, getCourseByNameForUser);
 
-// Admin views all users in a course
-// router.get("/:courseId/users", getUsersByCourse);
+// Fresh server-side access check — used by frontend paywall (never trust localStorage alone)
+router.get("/:courseId/access", protect, getCourseAccess);
 
-// Admin updates user info for a course
-router.patch("/:courseId/users/:userId", updateUserInCourse);
-
-// DELETE user from a specific course
-router.delete("/:courseId/users/:userId", verifyAdmin, removeUserFromCourse);
-
-
+router.patch ("/:courseId/users/:userId", verifyAdmin, requireCourseScopeBy({ kind: "course", paramKey: "courseId" }), updateUserInCourse);
+router.delete("/:courseId/users/:userId", verifyAdmin, requireCourseScopeBy({ kind: "course", paramKey: "courseId" }), removeUserFromCourse);
 
 export default router;

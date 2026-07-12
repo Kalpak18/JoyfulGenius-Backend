@@ -58,3 +58,16 @@ export const getAdminStatsSchema = {
 export const touchCourseEnrollmentSchema = {
   params: z.object({ courseId: objectId })
 };
+
+// Admin forgot password
+export const forgotAdminPasswordSchema = {
+  body: z.object({ email })
+};
+
+// Admin reset password
+export const resetAdminPasswordSchema = {
+  params: z.object({ token: z.string().min(1) }),
+  body: z.object({
+    password: z.string().min(8, "Password must be at least 8 characters"),
+  })
+};

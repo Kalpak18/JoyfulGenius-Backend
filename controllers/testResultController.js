@@ -86,6 +86,7 @@ export const getUserResults = async (req, res) => {
       .populate("courseId", "name")
       .populate("subjectId", "name")
       .populate("chapterId", "name")
+      .populate("bundleId", "title")
       .sort({ createdAt: -1 });
 
     // Map results so we return clean names instead of nested objects
@@ -94,7 +95,8 @@ export const getUserResults = async (req, res) => {
       courseName: r.courseId?.name || null,
       subjectName: r.subjectId?.name || null,
       chapterName: r.chapterId?.name || null,
-      testType: r.testType || r.type || "chapter", 
+      bundleTitle: r.bundleId?.title || null,
+      testType: r.testType || r.type || "chapter",
     }));
 
     res.status(200).json(formatted);

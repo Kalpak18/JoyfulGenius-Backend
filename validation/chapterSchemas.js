@@ -8,10 +8,12 @@ export const createOrUpdateChapterSchema = {
     subjectId: objectId,
     title: z.string().trim().min(1),
     language: z.string().trim().min(1),
-    youtubeCode: z.string().trim().optional().nullable(),
-    freetestCode: z.string().trim().optional().nullable(),
-    mastertestCode: z.string().trim().optional().nullable(),
-    attemptLimit: z.number().int().min(0).optional().nullable(), // allow 0 or null
+    youtubeCode:     z.string().trim().optional().nullable(),
+    freetestType:    z.enum(["external", "inapp"]).optional(),
+    freetestCode:    z.string().trim().optional().nullable(),
+    mastertestType:  z.enum(["external", "inapp"]).optional(),
+    mastertestCode:  z.string().trim().optional().nullable(),
+    attemptLimit:    z.number().int().min(0).optional().nullable(),
   }),
 };
 

@@ -1,5 +1,7 @@
 import { env } from '../config/validateEnv.js';
 import AppError from '../Utils/appError.js';
+import { Sentry } from '../config/sentry.js';
+import logger from '../Utils/logger.js';
 
 const {NODE_ENV} = env;
 
@@ -34,19 +36,16 @@ const sendErrorDev = (err, res) => {
 };
 
 const sendErrorProd = (err, res) => {
-  // Operational, trusted error: send message to client
   if (err.isOperational) {
     res.status(err.statusCode).json({
       status: err.status,
       message: err.message
     });
-
-    // Programming or other unknown error: don't leak error details
   } else {
-    // 1) Log error
-    console.error('ERROR 💥', err);
+    // Unknown error — capture to Sentry, send generic response
+    if (Sentry?.captureException) Sentry.captureException(err);
+    logger.error("Unhandled server error", { err });
 
-    // 2) Send generic message
     res.status(500).json({
       status: 'error',
       message: 'Something went very wrong!'

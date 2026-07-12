@@ -1,6 +1,7 @@
 import express from "express";
 import {
   addQuestion,
+  bulkImportQuestions,
   getQuestions,
   deleteQuestion,
   updateQuestion,
@@ -16,21 +17,22 @@ import {
 } from "../validation/questionSchemas.js";
 
 import { verifyAdmin, protect } from "../middleware/auth.js";
+import { requireCourseScope, requireCourseScopeBy } from "../middleware/tutorScope.js";
+import { requirePaidCourse } from "../middleware/requirePaidCourse.js";
 
 const router = express.Router();
 
-// Add a question (Admin only)
-router.post(
-  "/",
-  verifyAdmin,
-  validate(addQuestionSchema),
-  addQuestion
-);
+// Add a question (Admin only) — courseId in the body, scope-checked.
+router.post("/", verifyAdmin, requireCourseScope("courseId"), validate(addQuestionSchema), addQuestion);
 
-// Get questions (any logged in user)
+// Bulk import from CSV rows (Admin only) — courseId in the body.
+router.post("/bulk-import", verifyAdmin, requireCourseScope("courseId"), bulkImportQuestions);
+
+// Get questions — paid access required when courseId is present
 router.get(
   "/",
   protect,
+  requirePaidCourse,
   validate(getQuestionsSchema),
   getQuestions
 );
@@ -39,6 +41,7 @@ router.get(
 router.patch(
   "/:id",
   verifyAdmin,
+  requireCourseScopeBy({ kind: "question", paramKey: "id" }),
   validate(updateQuestionSchema),
   updateQuestion
 );
@@ -47,6 +50,7 @@ router.patch(
 router.delete(
   "/:id",
   verifyAdmin,
+  requireCourseScopeBy({ kind: "question", paramKey: "id" }),
   validate(deleteQuestionSchema),
   deleteQuestion
 );

@@ -12,6 +12,9 @@
   "author": "Kalpak B",
   "license": "ISC",
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1060.0",
+    "@aws-sdk/s3-request-presigner": "^3.1060.0",
+    "@sentry/node": "^10.56.0",
     "@supabase/supabase-js": "^2.54.0",
     "axios": "^1.11.0",
     "bcrypt": "^5.1.1",
@@ -40,11 +43,12 @@
     "razorpay": "^2.9.6",
     "rotating-file-stream": "^3.2.7",
     "stripe": "^18.1.0",
-    "twilio": "^5.5.2",
+    "swagger-ui-express": "^5.0.1",
     "util": "^0.12.5",
     "uuid": "^11.1.0",
     "validator": "^13.15.0",
     "xss-clean": "^0.1.4",
+    "yaml": "^2.9.0",
     "zod": "^3.25.76"
   },
   "devDependencies": {

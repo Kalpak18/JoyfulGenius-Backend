@@ -1,0 +1,2256 @@
+openapi: 3.1.0
+info:
+  title: JoyfulGenius API
+  version: 1.0.0
+  description: |
+    Complete REST API for the JoyfulGenius learning platform.
+
+    ## Roles
+    - **User**  — student. Registers via `/users/register`, browses & buys courses.
+    - **Tutor** — course helper. Created by an admin. Grades submissions inside scoped subjects.
+    - **Admin** — course owner. Created by the developer. Full write access to courses they own.
+    - **Developer** — platform operator. Created via one-time `/developer/register`. Manages admin accounts. Does NOT touch course content.
+
+    ## Auth
+    - Access tokens are short-lived JWTs sent as `Authorization: Bearer <token>`.
+    - Refresh tokens live in an httpOnly cookie (`refreshToken` / `adminRefreshToken`) scoped to the refresh endpoints.
+    - The frontend stores access tokens in `localStorage`/`sessionStorage` keyed by role.
+
+    ## Standard error envelope
+    ```json
+    { "message": "human-readable error", "code": "optional_machine_code" }
+    ```
+  contact:
+    name: JoyfulGenius Support
+    email: support@joyfulgenius.org
+  license:
+    name: Proprietary
+
+servers:
+  - url: http://localhost:4001/api
+    description: Local development
+  - url: https://api.joyfulgenius.org/api
+    description: Production
+
+# ─────────────────────────────────────────────────────────────────────────
+tags:
+  - name: Health
+    description: Uptime & pre-flight probes
+  - name: Auth — User
+    description: Student registration, login, refresh, password reset
+  - name: Auth — Admin
+    description: Course-owner + tutor login
+  - name: Auth — Developer
+    description: One-time developer bootstrap & login
+  - name: Courses
+    description: CRUD + student-facing browse
+  - name: Subjects
+    description: Course → Subject hierarchy
+  - name: Chapters
+    description: Subject → Chapter hierarchy
+  - name: Lectures
+    description: Video lectures (S3-backed) with completion tracking
+  - name: Study Materials
+    description: PDF / video / YouTube material references
+  - name: Questions
+    description: MCQ question bank + student test flow
+  - name: Test Bundles
+    description: Grouped question papers
+  - name: Assignments
+    description: Subjective assignments (admin CRUD)
+  - name: Submissions
+    description: Student subjective answers + grader inbox
+  - name: Payments
+    description: Razorpay orders + verification + audit
+  - name: Developer Ops
+    description: Manage admin accounts (developer-only)
+  - name: Admin Ops
+    description: Manage students, tutors, stats (admin-only)
+  - name: Progress & Bookmarks
+    description: Per-user course progress state
+
+# ─────────────────────────────────────────────────────────────────────────
+components:
+
+  securitySchemes:
+    userBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        Student access token (`localStorage.token` on the frontend). Verified by `protect` middleware.
+    adminBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        Admin / developer / tutor access token (`localStorage.admin_token`). Verified by `verifyAdmin`.
+        Additional role gates (`verifyDeveloper`, `requireCourseScope`) may narrow further.
+    refreshCookie:
+      type: apiKey
+      in: cookie
+      name: refreshToken
+      description: httpOnly cookie set by `/users/login`. Scoped to `/api/users/auth/refresh`.
+    adminRefreshCookie:
+      type: apiKey
+      in: cookie
+      name: adminRefreshToken
+      description: httpOnly cookie set by admin/developer login. Scoped to `/api/admin/refresh` and `/api/developer/refresh`.
+
+  # ── Reusable parameters ────────────────────────────────────────────
+  parameters:
+    ObjectIdParam:
+      name: id
+      in: path
+      required: true
+      description: MongoDB ObjectId (24 hex chars)
+      schema:
+        type: string
+        pattern: '^[0-9a-fA-F]{24}$'
+
+  # ── Reusable responses ─────────────────────────────────────────────
+  responses:
+    Unauthorized:
+      description: Missing or invalid access token
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Forbidden:
+      description: Authenticated but not allowed (wrong role / scope / ownership)
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    BadRequest:
+      description: Validation failed
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    PaymentRequired:
+      description: User has not paid for this course (paywall)
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/Error'
+              - type: object
+                properties:
+                  upgrade: { type: boolean, example: true }
+                  courseId: { type: string }
+
+  # ── Domain schemas ─────────────────────────────────────────────────
+  schemas:
+
+    Error:
+      type: object
+      properties:
+        message: { type: string, example: "Something went wrong" }
+        error:   { type: string, description: "Legacy alias — some endpoints use `error` instead of `message`" }
+        redirect:
+          type: string
+          description: If the wrong login endpoint was hit, points at the correct one.
+          example: "/developer/login"
+      required: []
+
+    ObjectId:
+      type: string
+      pattern: '^[0-9a-fA-F]{24}$'
+      example: '68a22e67ba843698d32c427a'
+
+    Timestamps:
+      type: object
+      properties:
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    PaidCourseEntry:
+      type: object
+      properties:
+        courseId:  { $ref: '#/components/schemas/ObjectId' }
+        isPaid:    { type: boolean }
+        username:  { type: string, nullable: true }
+        serial:    { type: integer, nullable: true }
+        paidAt:    { type: string, format: date-time, nullable: true }
+        joinedAt:  { type: string, format: date-time, nullable: true }
+        progress:
+          type: object
+          properties:
+            completedLessons: { type: integer, example: 4 }
+            totalLessons:     { type: integer, example: 12 }
+        testResults:
+          type: array
+          items: { $ref: '#/components/schemas/ObjectId' }
+        completedLectureIds:
+          type: array
+          items: { $ref: '#/components/schemas/ObjectId' }
+
+    User:
+      allOf:
+        - $ref: '#/components/schemas/Timestamps'
+        - type: object
+          properties:
+            _id:         { $ref: '#/components/schemas/ObjectId' }
+            f_name:      { type: string, example: "Kalpak" }
+            last_name:   { type: string, example: "Bhoir" }
+            email:       { type: string, format: email }
+            whatsappNo:  { type: string, example: "9876543210" }
+            district:    { type: string, example: "Hingoli" }
+            verified:    { type: boolean, example: true }
+            enrolledCourses:
+              type: array
+              items: { $ref: '#/components/schemas/ObjectId' }
+            paidCourses:
+              type: array
+              items: { $ref: '#/components/schemas/PaidCourseEntry' }
+            tokenVersion: { type: integer, example: 0 }
+
+    AdminSubjectScope:
+      type: object
+      description: One entry pairs a course with the tutor's subjects inside it. Empty subjectIds means "all subjects".
+      properties:
+        courseId:   { $ref: '#/components/schemas/ObjectId' }
+        subjectIds:
+          type: array
+          items: { $ref: '#/components/schemas/ObjectId' }
+
+    Admin:
+      allOf:
+        - $ref: '#/components/schemas/Timestamps'
+        - type: object
+          properties:
+            _id:   { $ref: '#/components/schemas/ObjectId' }
+            email: { type: string, format: email }
+            name:  { type: string, example: "Kalpak" }
+            role:
+              type: string
+              enum: [admin, developer, tutor]
+            scopedCourseIds:
+              type: array
+              description: Tutor scope — course IDs the tutor may work on. Empty for admin/developer.
+              items: { $ref: '#/components/schemas/ObjectId' }
+            subjectScopes:
+              type: array
+              description: Tutor scope — per-course subject narrowing. Empty for admin/developer.
+              items: { $ref: '#/components/schemas/AdminSubjectScope' }
+            tokenVersion: { type: integer }
+
+    Course:
+      allOf:
+        - $ref: '#/components/schemas/Timestamps'
+        - type: object
+          properties:
+            _id:            { $ref: '#/components/schemas/ObjectId' }
+            name:           { type: string, example: "NMMS" }
+            slug:           { type: string, example: "nmms" }
+            description:    { type: string, example: "The smartest way to prepare for NMMS" }
+            language:       { type: string, example: "Marathi" }
+            thumbnailUrl:   { type: string, example: "https://cdn.example.com/thumbs/nmms.png" }
+            priceINR:       { type: integer, minimum: 0, example: 149 }
+            status:         { type: string, enum: [draft, published, archived] }
+            validityDays:   { type: integer, nullable: true, example: 365 }
+            courseType:     { type: string, enum: [standard, test_series] }
+            builderVersion: { type: string, enum: [v1, v2] }
+            createdBy:      { $ref: '#/components/schemas/ObjectId' }
+            updatedBy:      { $ref: '#/components/schemas/ObjectId' }
+            enrolledUsers:
+              type: array
+              items: { $ref: '#/components/schemas/ObjectId' }
+            autoGenerateUsername: { type: boolean }
+            customUsername:       { type: boolean }
+            noUsername:           { type: boolean }
+            usernameFormat:       { type: string, example: "{serial}.{fname}{lname}.{district}" }
+
+    Subject:
+      allOf:
+        - $ref: '#/components/schemas/Timestamps'
+        - type: object
+          properties:
+            _id:         { $ref: '#/components/schemas/ObjectId' }
+            courseId:    { $ref: '#/components/schemas/ObjectId' }
+            name:        { type: string, example: "Mathematics" }
+            description: { type: string }
+            thumbnailUrl:{ type: string }
+
+    Chapter:
+      allOf:
+        - $ref: '#/components/schemas/Timestamps'
+        - type: object
+          properties:
+            _id:              { $ref: '#/components/schemas/ObjectId' }
+            courseId:         { $ref: '#/components/schemas/ObjectId' }
+            subjectId:        { $ref: '#/components/schemas/ObjectId' }
+            title:            { type: string, example: "Chapter 1: स्थानिक वेळ" }
+            language:         { type: string }
+            sortOrder:        { type: integer }
+            youtubeCode:      { type: string, example: "MGepW-kHn1o" }
+            freetestCode:     { type: string, example: "13769588" }
+            mastertestCode:   { type: string, example: "13662266" }
+            testAccess:       { type: string, enum: [free, paid] }
+            testScheduleType: { type: string, enum: [chapter, global] }
+            attemptLimit:     { type: integer, nullable: true }
+            availableFrom:    { type: string, format: date-time, nullable: true }
+            availableUntil:   { type: string, format: date-time, nullable: true }
+
+    Lecture:
+      allOf:
+        - $ref: '#/components/schemas/Timestamps'
+        - type: object
+          properties:
+            _id:          { $ref: '#/components/schemas/ObjectId' }
+            courseId:     { $ref: '#/components/schemas/ObjectId' }
+            subjectId:    { $ref: '#/components/schemas/ObjectId' }
+            chapterId:    { $ref: '#/components/schemas/ObjectId' }
+            title:        { type: string }
+            description:  { type: string }
+            durationSec:  { type: integer, description: "Video length in seconds" }
+            videoS3Key:   { type: string, description: "S3 object key (private)" }
+            thumbnailUrl: { type: string }
+            sortOrder:    { type: integer }
+            isPublished:  { type: boolean }
+            deletedAt:    { type: string, format: date-time, nullable: true }
+
+    StudyMaterial:
+      allOf:
+        - $ref: '#/components/schemas/Timestamps'
+        - type: object
+          properties:
+            _id:          { $ref: '#/components/schemas/ObjectId' }
+            title:        { type: string }
+            subject:      { type: string }
+            chapter:      { type: string }
+            type:         { type: string, enum: [pdf, video, youtube] }
+            youtubeLink:  { type: string, nullable: true }
+            downloadable: { type: boolean }
+            courseId:     { $ref: '#/components/schemas/ObjectId' }
+            subjectId:    { $ref: '#/components/schemas/ObjectId' }
+            chapterId:    { $ref: '#/components/schemas/ObjectId' }
+
+    Question:
+      allOf:
+        - $ref: '#/components/schemas/Timestamps'
+        - type: object
+          properties:
+            _id:           { $ref: '#/components/schemas/ObjectId' }
+            courseId:      { $ref: '#/components/schemas/ObjectId' }
+            subjectId:     { $ref: '#/components/schemas/ObjectId' }
+            chapterId:     { $ref: '#/components/schemas/ObjectId' }
+            question:      { type: string, example: "जगाच्या नकाशात रेखावृत्तांची एकूण संख्या …" }
+            options:
+              type: array
+              minItems: 2
+              maxItems: 6
+              items: { type: string }
+            correctAnswer: { type: integer, description: "0-based index into options[]" }
+            explanation:   { type: string, nullable: true }
+
+    TestBundle:
+      allOf:
+        - $ref: '#/components/schemas/Timestamps'
+        - type: object
+          properties:
+            _id:         { $ref: '#/components/schemas/ObjectId' }
+            title:       { type: string }
+            courseId:    { $ref: '#/components/schemas/ObjectId' }
+            questionIds:
+              type: array
+              items: { $ref: '#/components/schemas/ObjectId' }
+            durationMin: { type: integer }
+            maxAttempts: { type: integer, nullable: true }
+            isPublished: { type: boolean }
+
+    TestResult:
+      allOf:
+        - $ref: '#/components/schemas/Timestamps'
+        - type: object
+          properties:
+            _id:        { $ref: '#/components/schemas/ObjectId' }
+            userId:     { $ref: '#/components/schemas/ObjectId' }
+            courseId:   { $ref: '#/components/schemas/ObjectId' }
+            score:      { type: number }
+            total:      { type: number }
+            answers:
+              type: array
+              items:
+                type: object
+                properties:
+                  questionId: { $ref: '#/components/schemas/ObjectId' }
+                  chosen:     { type: integer }
+                  correct:    { type: boolean }
+
+    Assignment:
+      allOf:
+        - $ref: '#/components/schemas/Timestamps'
+        - type: object
+          properties:
+            _id:              { $ref: '#/components/schemas/ObjectId' }
+            courseId:         { $ref: '#/components/schemas/ObjectId' }
+            subjectId:        { $ref: '#/components/schemas/ObjectId', nullable: true }
+            chapterId:        { $ref: '#/components/schemas/ObjectId', nullable: true }
+            title:            { type: string }
+            prompt:           { type: string }
+            modelAnswer:      { type: string, description: "Admin-only. Never returned to students." }
+            rubric:           { type: string }
+            maxMarks:         { type: integer, minimum: 1, maximum: 100 }
+            answerLimitChars: { type: integer, minimum: 100, maximum: 10000 }
+            status:           { type: string, enum: [draft, open, closed] }
+            dueAt:            { type: string, format: date-time, nullable: true }
+            createdBy:        { $ref: '#/components/schemas/ObjectId' }
+
+    Submission:
+      allOf:
+        - $ref: '#/components/schemas/Timestamps'
+        - type: object
+          properties:
+            _id:                { $ref: '#/components/schemas/ObjectId' }
+            assignmentId:       { $ref: '#/components/schemas/ObjectId' }
+            courseId:           { $ref: '#/components/schemas/ObjectId' }
+            subjectId:          { $ref: '#/components/schemas/ObjectId', nullable: true }
+            user:               { $ref: '#/components/schemas/ObjectId' }
+            answer:             { type: string, maxLength: 10000 }
+            status:             { type: string, enum: [pending, graded, failed, overridden] }
+            score:              { type: number, nullable: true }
+            feedback:           { type: string }
+            assignedReviewerId: { $ref: '#/components/schemas/ObjectId', nullable: true }
+            overriddenBy:       { $ref: '#/components/schemas/ObjectId', nullable: true }
+            overriddenAt:       { type: string, format: date-time, nullable: true }
+            overrideReason:     { type: string }
+            submittedAt:        { type: string, format: date-time }
+            gradedAt:           { type: string, format: date-time, nullable: true }
+
+    Payment:
+      allOf:
+        - $ref: '#/components/schemas/Timestamps'
+        - type: object
+          properties:
+            _id:               { $ref: '#/components/schemas/ObjectId' }
+            userId:            { $ref: '#/components/schemas/ObjectId' }
+            courseId:          { $ref: '#/components/schemas/ObjectId' }
+            amountINR:         { type: integer }
+            razorpayOrderId:   { type: string }
+            razorpayPaymentId: { type: string, nullable: true }
+            razorpaySignature: { type: string, nullable: true }
+            status:            { type: string, enum: [created, paid, failed, refunded, granted, revoked] }
+            source:            { type: string, enum: [razorpay, admin_grant, admin_revoke] }
+            reason:            { type: string, nullable: true, description: "Populated for admin grants/revokes" }
+            adminActor:        { $ref: '#/components/schemas/ObjectId', nullable: true }
+
+    Section:
+      description: Flexible course builder (v2) — a section holds ContentBlocks.
+      type: object
+      properties:
+        _id:        { $ref: '#/components/schemas/ObjectId' }
+        courseId:   { $ref: '#/components/schemas/ObjectId' }
+        title:      { type: string }
+        sortOrder:  { type: integer }
+
+    ContentBlock:
+      description: Flexible course builder (v2) — one block inside a Section.
+      type: object
+      properties:
+        _id:       { $ref: '#/components/schemas/ObjectId' }
+        sectionId: { $ref: '#/components/schemas/ObjectId' }
+        courseId:  { $ref: '#/components/schemas/ObjectId' }
+        type:      { type: string, enum: [text, video, pdf, quiz, assignment] }
+        payload:
+          type: object
+          description: Shape depends on `type`.
+        sortOrder: { type: integer }
+
+    # ── Auth response envelopes ────────────────────────────────────
+    LoginResponse:
+      type: object
+      properties:
+        message:     { type: string }
+        accessToken: { type: string, description: "Short-lived JWT (15 min)" }
+        role:        { type: string }
+        user:
+          oneOf:
+            - $ref: '#/components/schemas/User'
+            - $ref: '#/components/schemas/Admin'
+
+    RefreshResponse:
+      type: object
+      properties:
+        accessToken: { type: string }
+        role:        { type: string }
+        user:
+          oneOf:
+            - $ref: '#/components/schemas/User'
+            - $ref: '#/components/schemas/Admin'
+
+# ─────────────────────────────────────────────────────────────────────────
+paths:
+
+  # ══════════════════════════════════════════════════════════════════
+  # Health
+  # ══════════════════════════════════════════════════════════════════
+  /health:
+    get:
+      tags: [Health]
+      summary: Liveness probe
+      description: Cheap uptime check. Returns 200 as long as the process is running.
+      responses:
+        '200':
+          description: Alive
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:  { type: string, example: "ok" }
+                  uptime:  { type: number, example: 1234.5 }
+                  env:     { type: string, example: "development" }
+                  dbState: { type: integer, example: 1 }
+
+  /health/full:
+    get:
+      tags: [Health]
+      summary: Full diagnostics (production gated)
+      description: |
+        Reports which subsystems are wired. In production requires `?key=<HEALTH_TOKEN>`;
+        without a matching token returns 404. Never leaks secret values.
+      parameters:
+        - name: key
+          in: query
+          required: false
+          schema: { type: string }
+          description: HEALTH_TOKEN env value (production only)
+      responses:
+        '200':
+          description: Diagnostic report
+          content:
+            application/json:
+              schema:
+                type: object
+        '404':
+          description: Endpoint hidden (production without valid key)
+
+  # ══════════════════════════════════════════════════════════════════
+  # Auth — User
+  # ══════════════════════════════════════════════════════════════════
+  /users/register:
+    post:
+      tags: [Auth — User]
+      summary: Register a new student
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [f_name, last_name, whatsappNo, password, district]
+              properties:
+                f_name:     { type: string }
+                last_name:  { type: string }
+                email:      { type: string, format: email }
+                whatsappNo: { type: string, pattern: '^[0-9]{10}$' }
+                password:   { type: string, minLength: 6 }
+                district:   { type: string }
+      responses:
+        '201':
+          description: Account created; verification OTP dispatched (if email present)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+                  userId:  { $ref: '#/components/schemas/ObjectId' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+
+  /users/verify-otp:
+    post:
+      tags: [Auth — User]
+      summary: Verify a signup OTP
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, otp]
+              properties:
+                email: { type: string, format: email }
+                otp:   { type: string, pattern: '^[0-9]{6}$' }
+      responses:
+        '200': { description: Verified }
+        '400': { $ref: '#/components/responses/BadRequest' }
+
+  /users/resend-otp:
+    post:
+      tags: [Auth — User]
+      summary: Re-send signup OTP
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email: { type: string, format: email }
+      responses:
+        '200': { description: OTP sent (idempotent) }
+
+  /users/login:
+    post:
+      tags: [Auth — User]
+      summary: Student login
+      description: Accepts either `email` or a WhatsApp `identifier`. Rate-limited.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - type: object
+                  required: [email, password]
+                  properties:
+                    email:    { type: string, format: email }
+                    password: { type: string }
+                - type: object
+                  required: [identifier, password]
+                  properties:
+                    identifier: { type: string, description: "Email or 10-digit WhatsApp number" }
+                    password:   { type: string }
+      responses:
+        '200':
+          description: Logged in
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LoginResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /users/auth/refresh:
+    post:
+      tags: [Auth — User]
+      summary: Refresh access token from cookie
+      security:
+        - refreshCookie: []
+      responses:
+        '200':
+          description: New access token issued
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RefreshResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /users/logout:
+    post:
+      tags: [Auth — User]
+      summary: Log out — clears refresh cookie
+      responses:
+        '200': { description: Cookie cleared }
+
+  /users/forgot-password:
+    post:
+      tags: [Auth — User]
+      summary: Email a reset link
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email: { type: string, format: email }
+      responses:
+        '200': { description: If the email exists a link was sent. Response is idempotent. }
+
+  /users/reset-password/{token}:
+    post:
+      tags: [Auth — User]
+      summary: Redeem a reset token and set a new password
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [password]
+              properties:
+                password: { type: string, minLength: 6 }
+      responses:
+        '200': { description: Password updated }
+        '400': { $ref: '#/components/responses/BadRequest' }
+
+  /users/me:
+    get:
+      tags: [Auth — User]
+      summary: Current student profile
+      security: [{ userBearer: [] }]
+      responses:
+        '200':
+          description: Profile
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /users/me/progress:
+    patch:
+      tags: [Progress & Bookmarks]
+      summary: Update lecture progress
+      security: [{ userBearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [courseId, lectureId]
+              properties:
+                courseId:  { $ref: '#/components/schemas/ObjectId' }
+                lectureId: { $ref: '#/components/schemas/ObjectId' }
+                chapterId: { $ref: '#/components/schemas/ObjectId' }
+                subjectId: { $ref: '#/components/schemas/ObjectId' }
+                completed: { type: boolean }
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  completedLectureIds:
+                    type: array
+                    items: { $ref: '#/components/schemas/ObjectId' }
+
+  /users/track-course/{userId}/{courseId}:
+    post:
+      tags: [Progress & Bookmarks]
+      summary: Track that a user visited a course (analytics)
+      security: [{ userBearer: [] }]
+      parameters:
+        - { name: userId,   in: path, required: true, schema: { type: string } }
+        - { name: courseId, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Recorded }
+
+  # ══════════════════════════════════════════════════════════════════
+  # Auth — Admin
+  # ══════════════════════════════════════════════════════════════════
+  /admin/login:
+    post:
+      tags: [Auth — Admin]
+      summary: Admin / tutor login
+      description: |
+        Accepts admin + tutor accounts only. Developer accounts get 403 with a
+        `redirect: "/developer/login"` hint so the UI can bounce them.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email:    { type: string, format: email }
+                password: { type: string }
+      responses:
+        '200':
+          description: Signed in
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LoginResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /admin/refresh:
+    post:
+      tags: [Auth — Admin]
+      summary: Refresh admin/tutor access token
+      security:
+        - adminRefreshCookie: []
+      responses:
+        '200':
+          description: New access token
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RefreshResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /admin/logout:
+    post:
+      tags: [Auth — Admin]
+      summary: Admin logout
+      responses:
+        '200': { description: Cookie cleared }
+
+  /admin/forgot-password:
+    post:
+      tags: [Auth — Admin]
+      summary: Email an admin password-reset link
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email: { type: string, format: email }
+      responses:
+        '200': { description: Sent (idempotent) }
+
+  /admin/reset-password/{token}:
+    post:
+      tags: [Auth — Admin]
+      summary: Redeem an admin reset token
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [password]
+              properties:
+                password: { type: string, minLength: 6 }
+      responses:
+        '200': { description: Password updated }
+
+  # ══════════════════════════════════════════════════════════════════
+  # Auth — Developer
+  # ══════════════════════════════════════════════════════════════════
+  /developer/register:
+    post:
+      tags: [Auth — Developer]
+      summary: One-time developer bootstrap
+      description: Works only when zero developer accounts exist. Locked forever afterward.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email:    { type: string, format: email }
+                password: { type: string, minLength: 6 }
+                name:     { type: string }
+      responses:
+        '201':
+          description: Developer created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LoginResponse' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /developer/login:
+    post:
+      tags: [Auth — Developer]
+      summary: Developer-only login
+      description: 'Rejects admin + tutor accounts with `redirect: "/admin/login"`.'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email:    { type: string, format: email }
+                password: { type: string }
+      responses:
+        '200':
+          description: Signed in
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LoginResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /developer/refresh:
+    post:
+      tags: [Auth — Developer]
+      summary: Refresh developer access token
+      security:
+        - adminRefreshCookie: []
+      responses:
+        '200':
+          description: New access token
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RefreshResponse' }
+
+  /developer/logout:
+    post:
+      tags: [Auth — Developer]
+      summary: Developer logout
+      responses:
+        '200': { description: Cookie cleared }
+
+  # ══════════════════════════════════════════════════════════════════
+  # Courses
+  # ══════════════════════════════════════════════════════════════════
+  /courses/public:
+    get:
+      tags: [Courses]
+      summary: Public course catalog (no auth)
+      description: Only `published` courses. Minimal fields — safe to cache.
+      responses:
+        '200':
+          description: Course list
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Course' }
+
+  /courses:
+    get:
+      tags: [Courses]
+      summary: Same catalog with a data wrapper (back-compat)
+      security: [{ userBearer: [] }]
+      responses:
+        '200':
+          description: Courses
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Course' }
+    post:
+      tags: [Courses]
+      summary: Create a course (admin-owner only)
+      security: [{ adminBearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:         { type: string }
+                slug:         { type: string }
+                description:  { type: string }
+                language:     { type: string }
+                thumbnailUrl: { type: string }
+                priceINR:     { type: integer }
+                status:       { type: string, enum: [draft, published, archived] }
+                validityDays: { type: integer, nullable: true }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Course' }
+        '403':
+          description: Developers and tutors cannot create courses.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /courses/admin/list:
+    get:
+      tags: [Courses]
+      summary: Admin course list (drafts + archived visible)
+      description: |
+        - Admin sees courses they own (`createdBy` match)
+        - Tutor sees courses in `scopedCourseIds`
+        - Developer sees an empty list (they don't manage content)
+      security: [{ adminBearer: [] }]
+      responses:
+        '200':
+          description: Course list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Course' }
+
+  /courses/{courseId}:
+    put:
+      tags: [Courses]
+      summary: Update a course (owner or scoped tutor)
+      security: [{ adminBearer: [] }]
+      parameters:
+        - name: courseId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Course'
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Course' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    delete:
+      tags: [Courses]
+      summary: Delete a course + cascade subjects/chapters (owner only)
+      security: [{ adminBearer: [] }]
+      parameters:
+        - name: courseId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Deleted }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /courses/{courseId}/access:
+    get:
+      tags: [Courses]
+      summary: Fresh server-side paywall check
+      description: Frontend uses this before rendering paid content so stale localStorage can't grant access.
+      security: [{ userBearer: [] }]
+      parameters:
+        - name: courseId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Access status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  course:  { $ref: '#/components/schemas/Course' }
+                  isPaid:  { type: boolean }
+                  isFree:  { type: boolean }
+                  paidAt:  { type: string, format: date-time, nullable: true }
+                  username: { type: string, nullable: true }
+
+  /courses/user/courses:
+    get:
+      tags: [Courses]
+      summary: Student's course list with per-course paid status
+      security: [{ userBearer: [] }]
+      responses:
+        '200':
+          description: Courses with paid metadata
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      allOf:
+                        - $ref: '#/components/schemas/Course'
+                        - type: object
+                          properties:
+                            isPaid:   { type: boolean }
+                            username: { type: string, nullable: true }
+                            paidAt:   { type: string, format: date-time, nullable: true }
+
+  /courses/user/course/{coursename}:
+    get:
+      tags: [Courses]
+      summary: Get a course by slug or name (student)
+      security: [{ userBearer: [] }]
+      parameters:
+        - name: coursename
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Course with paid metadata
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /courses/visit-course:
+    post:
+      tags: [Courses]
+      summary: Enroll a user (no payment — just registers interest)
+      security: [{ userBearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [courseId, userId]
+              properties:
+                courseId: { $ref: '#/components/schemas/ObjectId' }
+                userId:   { $ref: '#/components/schemas/ObjectId' }
+      responses:
+        '200': { description: Enrolled }
+
+  /courses/{courseId}/users/{userId}:
+    patch:
+      tags: [Courses]
+      summary: Admin — patch a user's enrollment (isPaid, username, etc.)
+      security: [{ adminBearer: [] }]
+      parameters:
+        - { name: courseId, in: path, required: true, schema: { type: string } }
+        - { name: userId,   in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                isPaid:   { type: boolean }
+                username: { type: string }
+                progress:
+                  type: object
+                testResults:
+                  type: array
+      responses:
+        '200': { description: Updated }
+    delete:
+      tags: [Courses]
+      summary: Remove a user from a course
+      security: [{ adminBearer: [] }]
+      parameters:
+        - { name: courseId, in: path, required: true, schema: { type: string } }
+        - { name: userId,   in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Removed }
+
+  # ══════════════════════════════════════════════════════════════════
+  # Subjects
+  # ══════════════════════════════════════════════════════════════════
+  /subjects:
+    get:
+      tags: [Subjects]
+      summary: List subjects in a course (paid access required)
+      security: [{ userBearer: [] }]
+      parameters:
+        - name: courseId
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Subjects
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Subject' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+    post:
+      tags: [Subjects]
+      summary: Create a subject
+      security: [{ adminBearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [courseId, name]
+              properties:
+                courseId:    { $ref: '#/components/schemas/ObjectId' }
+                name:        { type: string }
+                description: { type: string }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Subject' }
+
+  /subjects/grouped:
+    get:
+      tags: [Subjects]
+      summary: All subjects grouped by course (no auth — used by admin scope picker)
+      responses:
+        '200':
+          description: Grouped list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    _id:              { $ref: '#/components/schemas/ObjectId' }
+                    courseName:       { type: string }
+                    courseDescription: { type: string }
+                    subjects:
+                      type: array
+                      items: { $ref: '#/components/schemas/Subject' }
+
+  /subjects/{id}:
+    get:
+      tags: [Subjects]
+      summary: Get one subject
+      parameters: [ { $ref: '#/components/parameters/ObjectIdParam' } ]
+      responses:
+        '200':
+          description: Subject
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Subject' }
+    put:
+      tags: [Subjects]
+      summary: Update a subject
+      security: [{ adminBearer: [] }]
+      parameters: [ { $ref: '#/components/parameters/ObjectIdParam' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Subject' }
+      responses:
+        '200': { description: Updated }
+    delete:
+      tags: [Subjects]
+      summary: Delete a subject
+      security: [{ adminBearer: [] }]
+      parameters: [ { $ref: '#/components/parameters/ObjectIdParam' } ]
+      responses:
+        '200': { description: Deleted }
+
+  /subjects/by-name/{courseId}/{subjectName}:
+    get:
+      tags: [Subjects]
+      summary: Get subject by name within a course (public helper for URL slugs)
+      parameters:
+        - { name: courseId,    in: path, required: true, schema: { type: string } }
+        - { name: subjectName, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Subject }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ══════════════════════════════════════════════════════════════════
+  # Chapters
+  # ══════════════════════════════════════════════════════════════════
+  /chapters:
+    get:
+      tags: [Chapters]
+      summary: List chapters (paid access required if courseId provided)
+      security: [{ userBearer: [] }]
+      parameters:
+        - name: courseId
+          in: query
+          schema: { type: string }
+        - name: subjectId
+          in: query
+          schema: { type: string }
+      responses:
+        '200':
+          description: Chapters
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Chapter' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+    post:
+      tags: [Chapters]
+      summary: Create or upsert a chapter
+      security: [{ adminBearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Chapter' }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Chapter' }
+
+  /chapters/{id}:
+    get:
+      tags: [Chapters]
+      summary: Get one chapter
+      parameters: [ { $ref: '#/components/parameters/ObjectIdParam' } ]
+      responses:
+        '200':
+          description: Chapter
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Chapter' }
+    put:
+      tags: [Chapters]
+      summary: Update a chapter
+      security: [{ adminBearer: [] }]
+      parameters: [ { $ref: '#/components/parameters/ObjectIdParam' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Chapter' }
+      responses:
+        '200': { description: Updated }
+    delete:
+      tags: [Chapters]
+      summary: Delete a chapter
+      security: [{ adminBearer: [] }]
+      parameters: [ { $ref: '#/components/parameters/ObjectIdParam' } ]
+      responses:
+        '200': { description: Deleted }
+
+  # ══════════════════════════════════════════════════════════════════
+  # Lectures
+  # ══════════════════════════════════════════════════════════════════
+  /lectures:
+    get:
+      tags: [Lectures]
+      summary: List lectures in a chapter (paid access required)
+      security: [{ userBearer: [] }]
+      parameters:
+        - name: chapterId
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Lectures
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Lecture' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+
+  /lectures/{id}:
+    get:
+      tags: [Lectures]
+      summary: Get one lecture (paid access required)
+      security: [{ userBearer: [] }]
+      parameters: [ { $ref: '#/components/parameters/ObjectIdParam' } ]
+      responses:
+        '200':
+          description: Lecture
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Lecture' }
+
+  /lectures/{id}/stream-url:
+    get:
+      tags: [Lectures]
+      summary: Signed S3 URL for video playback (paid access required)
+      description: Returns a short-lived presigned S3 URL. TTL ~1h.
+      security: [{ userBearer: [] }]
+      parameters: [ { $ref: '#/components/parameters/ObjectIdParam' } ]
+      responses:
+        '200':
+          description: URL
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  url:       { type: string }
+                  expiresIn: { type: integer, example: 3600 }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+
+  /admin/lectures:
+    post:
+      tags: [Lectures]
+      summary: Create a lecture (admin/tutor scoped)
+      security: [{ adminBearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Lecture' }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Lecture' }
+
+  /admin/lectures/{id}:
+    patch:
+      tags: [Lectures]
+      summary: Update a lecture
+      security: [{ adminBearer: [] }]
+      parameters: [ { $ref: '#/components/parameters/ObjectIdParam' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Lecture' }
+      responses:
+        '200': { description: Updated }
+    delete:
+      tags: [Lectures]
+      summary: Soft-delete a lecture
+      security: [{ adminBearer: [] }]
+      parameters: [ { $ref: '#/components/parameters/ObjectIdParam' } ]
+      responses:
+        '200': { description: Deleted }
+
+  /admin/lectures/presign-upload:
+    post:
+      tags: [Lectures]
+      summary: Presign a direct-to-S3 video upload
+      description: Client uploads the video directly to S3, then calls create-lecture with the returned `key`.
+      security: [{ adminBearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [filename, contentType, size]
+              properties:
+                filename:    { type: string }
+                contentType: { type: string, example: "video/mp4" }
+                size:        { type: integer, description: "bytes" }
+      responses:
+        '200':
+          description: Signed URL + key
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  url: { type: string }
+                  key: { type: string }
+                  expiresIn: { type: integer }
+
+  # ══════════════════════════════════════════════════════════════════
+  # Study Materials
+  # ══════════════════════════════════════════════════════════════════
+  /materials:
+    get:
+      tags: [Study Materials]
+      summary: List study materials
+      security: [{ userBearer: [] }]
+      responses:
+        '200':
+          description: Materials
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/StudyMaterial' }
+    post:
+      tags: [Study Materials]
+      summary: Upload/create a study material record
+      security: [{ adminBearer: [] }]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                title:        { type: string }
+                type:         { type: string, enum: [pdf, video, youtube] }
+                youtubeLink:  { type: string }
+                downloadable: { type: boolean }
+                file:         { type: string, format: binary }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StudyMaterial' }
+
+  /materials/{id}/stream:
+    get:
+      tags: [Study Materials]
+      summary: Stream a material's binary payload
+      description: 'Sets the appropriate `Content-Type` and (for PDFs) `Content-Disposition: inline`.'
+      security: [{ userBearer: [] }]
+      parameters: [ { $ref: '#/components/parameters/ObjectIdParam' } ]
+      responses:
+        '200':
+          description: Binary stream
+          content:
+            application/octet-stream: {}
+
+  /materials/{id}:
+    delete:
+      tags: [Study Materials]
+      summary: Delete a study material
+      security: [{ adminBearer: [] }]
+      parameters: [ { $ref: '#/components/parameters/ObjectIdParam' } ]
+      responses:
+        '200': { description: Deleted }
+
+  # ══════════════════════════════════════════════════════════════════
+  # Questions
+  # ══════════════════════════════════════════════════════════════════
+  /questions:
+    get:
+      tags: [Questions]
+      summary: List questions (paid access required)
+      security: [{ userBearer: [] }]
+      parameters:
+        - name: courseId
+          in: query
+          schema: { type: string }
+        - name: subjectId
+          in: query
+          schema: { type: string }
+        - name: chapterId
+          in: query
+          schema: { type: string }
+      responses:
+        '200':
+          description: Questions
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Question' }
+    post:
+      tags: [Questions]
+      summary: Add a question
+      security: [{ adminBearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Question' }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Question' }
+
+  /questions/bulk-import:
+    post:
+      tags: [Questions]
+      summary: Bulk import questions from a JSON array
+      security: [{ adminBearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [courseId, questions]
+              properties:
+                courseId: { $ref: '#/components/schemas/ObjectId' }
+                questions:
+                  type: array
+                  items: { $ref: '#/components/schemas/Question' }
+      responses:
+        '200':
+          description: Import summary
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  inserted: { type: integer }
+                  skipped:  { type: integer }
+
+  /questions/{id}:
+    put:
+      tags: [Questions]
+      summary: Update a question
+      security: [{ adminBearer: [] }]
+      parameters: [ { $ref: '#/components/parameters/ObjectIdParam' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Question' }
+      responses:
+        '200': { description: Updated }
+    delete:
+      tags: [Questions]
+      summary: Delete a question
+      security: [{ adminBearer: [] }]
+      parameters: [ { $ref: '#/components/parameters/ObjectIdParam' } ]
+      responses:
+        '200': { description: Deleted }
+
+  /questions/submit:
+    post:
+      tags: [Questions]
+      summary: Submit a completed test attempt
+      security: [{ userBearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [courseId, answers]
+              properties:
+                courseId: { $ref: '#/components/schemas/ObjectId' }
+                answers:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      questionId: { $ref: '#/components/schemas/ObjectId' }
+                      chosen:     { type: integer, description: "0-based index" }
+      responses:
+        '200':
+          description: Scored result
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TestResult' }
+
+  # ══════════════════════════════════════════════════════════════════
+  # Test Bundles
+  # ══════════════════════════════════════════════════════════════════
+  /test-bundles:
+    get:
+      tags: [Test Bundles]
+      summary: List test bundles
+      security: [{ userBearer: [] }]
+      parameters:
+        - name: courseId
+          in: query
+          schema: { type: string }
+      responses:
+        '200':
+          description: Bundles
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/TestBundle' }
+    post:
+      tags: [Test Bundles]
+      summary: Create a bundle
+      security: [{ adminBearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TestBundle' }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TestBundle' }
+
+  /test-bundles/{id}:
+    get:
+      tags: [Test Bundles]
+      summary: Get a bundle
+      security: [{ userBearer: [] }]
+      parameters: [ { $ref: '#/components/parameters/ObjectIdParam' } ]
+      responses:
+        '200': { description: Bundle }
+    patch:
+      tags: [Test Bundles]
+      summary: Update a bundle
+      security: [{ adminBearer: [] }]
+      parameters: [ { $ref: '#/components/parameters/ObjectIdParam' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TestBundle' }
+      responses:
+        '200': { description: Updated }
+    delete:
+      tags: [Test Bundles]
+      summary: Delete a bundle
+      security: [{ adminBearer: [] }]
+      parameters: [ { $ref: '#/components/parameters/ObjectIdParam' } ]
+      responses:
+        '200': { description: Deleted }
+
+  # ══════════════════════════════════════════════════════════════════
+  # Assignments (subjective, manual-graded)
+  # ══════════════════════════════════════════════════════════════════
+  /assignments:
+    get:
+      tags: [Assignments]
+      summary: List open assignments (student)
+      security: [{ userBearer: [] }]
+      parameters:
+        - name: courseId
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Assignments with `mySubmission` attached
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  allOf:
+                    - $ref: '#/components/schemas/Assignment'
+                    - type: object
+                      properties:
+                        mySubmission:
+                          $ref: '#/components/schemas/Submission'
+
+  /assignments/{id}:
+    get:
+      tags: [Assignments]
+      summary: Get one assignment (student)
+      security: [{ userBearer: [] }]
+      parameters: [ { $ref: '#/components/parameters/ObjectIdParam' } ]
+      responses:
+        '200':
+          description: Public assignment (never includes modelAnswer/rubric)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Assignment' }
+
+  /assignments/{id}/submit:
+    post:
+      tags: [Submissions]
+      summary: Submit or re-submit an answer
+      description: Re-submitting overwrites. Locked once a grader has scored it.
+      security: [{ userBearer: [] }]
+      parameters: [ { $ref: '#/components/parameters/ObjectIdParam' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [answer]
+              properties:
+                answer: { type: string }
+      responses:
+        '201':
+          description: Submitted
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Submission' }
+
+  /assignments/{id}/mine:
+    get:
+      tags: [Submissions]
+      summary: Fetch the student's own submission
+      security: [{ userBearer: [] }]
+      parameters: [ { $ref: '#/components/parameters/ObjectIdParam' } ]
+      responses:
+        '200':
+          description: Submission
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Submission' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /admin/assignments:
+    get:
+      tags: [Assignments]
+      summary: List assignments (admin/tutor scoped)
+      security: [{ adminBearer: [] }]
+      parameters:
+        - name: courseId
+          in: query
+          schema: { type: string }
+        - name: status
+          in: query
+          schema: { type: string, enum: [draft, open, closed] }
+      responses:
+        '200':
+          description: Assignments
+    post:
+      tags: [Assignments]
+      summary: Create assignment
+      security: [{ adminBearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Assignment' }
+      responses:
+        '201':
+          description: Created
+
+  /admin/assignments/{id}:
+    get:
+      tags: [Assignments]
+      summary: Get one assignment (admin view — includes modelAnswer + rubric)
+      security: [{ adminBearer: [] }]
+      parameters: [ { $ref: '#/components/parameters/ObjectIdParam' } ]
+      responses:
+        '200':
+          description: Assignment
+    patch:
+      tags: [Assignments]
+      summary: Update assignment
+      security: [{ adminBearer: [] }]
+      parameters: [ { $ref: '#/components/parameters/ObjectIdParam' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Assignment' }
+      responses:
+        '200': { description: Updated }
+    delete:
+      tags: [Assignments]
+      summary: Delete assignment + cascade submissions
+      security: [{ adminBearer: [] }]
+      parameters: [ { $ref: '#/components/parameters/ObjectIdParam' } ]
+      responses:
+        '200': { description: Deleted }
+
+  /admin/assignments/{id}/submissions:
+    get:
+      tags: [Submissions]
+      summary: List all submissions for an assignment
+      security: [{ adminBearer: [] }]
+      parameters: [ { $ref: '#/components/parameters/ObjectIdParam' } ]
+      responses:
+        '200':
+          description: Submissions with user populated
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Submission' }
+
+  /admin/submissions/pending:
+    get:
+      tags: [Submissions]
+      summary: Grader inbox
+      description: |
+        - Developer sees `[]` — they don't grade.
+        - Admin sees pending submissions in courses they OWN.
+        - Tutor sees submissions where they're `assignedReviewerId`, plus unassigned pending submissions in their scoped courses.
+      security: [{ adminBearer: [] }]
+      responses:
+        '200':
+          description: Pending submissions
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Submission' }
+
+  /admin/submissions/{subId}/override:
+    patch:
+      tags: [Submissions]
+      summary: Manually grade a submission
+      security: [{ adminBearer: [] }]
+      parameters:
+        - name: subId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [score]
+              properties:
+                score:    { type: number }
+                feedback: { type: string }
+                reason:   { type: string, description: "Internal audit note" }
+      responses:
+        '200':
+          description: Submission graded and locked
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Submission' }
+        '403':
+          description: You don't own this course
+        '400':
+          description: Score exceeds maxMarks
+
+  # ══════════════════════════════════════════════════════════════════
+  # Payments
+  # ══════════════════════════════════════════════════════════════════
+  /payments/create-order:
+    post:
+      tags: [Payments]
+      summary: Create a Razorpay order for a course purchase
+      security: [{ userBearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [courseId]
+              properties:
+                courseId: { $ref: '#/components/schemas/ObjectId' }
+      responses:
+        '200':
+          description: Razorpay order
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  keyId:            { type: string, description: "Razorpay public key" }
+                  orderId:          { type: string }
+                  amount:           { type: integer }
+                  currency:         { type: string, example: "INR" }
+
+  /payments/verify:
+    post:
+      tags: [Payments]
+      summary: Verify Razorpay signature and grant access
+      description: Server verifies `razorpay_signature` before flipping `paidCourses[].isPaid`.
+      security: [{ userBearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [razorpay_order_id, razorpay_payment_id, razorpay_signature, courseId]
+              properties:
+                razorpay_order_id:   { type: string }
+                razorpay_payment_id: { type: string }
+                razorpay_signature:  { type: string }
+                courseId:            { $ref: '#/components/schemas/ObjectId' }
+      responses:
+        '200': { description: Access granted }
+        '400': { description: Signature verification failed }
+
+  /payments/webhook:
+    post:
+      tags: [Payments]
+      summary: Razorpay webhook (server-to-server)
+      description: |
+        Idempotent. Verifies `x-razorpay-signature` against `RAZORPAY_WEBHOOK_SECRET`.
+        Handles `payment.captured`, `payment.failed`, and refund events.
+      responses:
+        '200': { description: Acknowledged }
+        '400': { description: Signature invalid }
+
+  /admin/grant-access:
+    post:
+      tags: [Payments]
+      summary: Admin — grant a user paid access (audited)
+      security: [{ adminBearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [userId, courseId, reason]
+              properties:
+                userId:   { $ref: '#/components/schemas/ObjectId' }
+                courseId: { $ref: '#/components/schemas/ObjectId' }
+                reason:   { type: string, minLength: 5 }
+      responses:
+        '200': { description: Access granted, audit Payment doc created }
+
+  /admin/revoke-access:
+    post:
+      tags: [Payments]
+      summary: Admin — revoke a user's paid access (audited)
+      security: [{ adminBearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [userId, courseId, reason]
+              properties:
+                userId:   { $ref: '#/components/schemas/ObjectId' }
+                courseId: { $ref: '#/components/schemas/ObjectId' }
+                reason:   { type: string, minLength: 5 }
+      responses:
+        '200': { description: Access revoked, audit Payment doc created }
+
+  /admin/payments:
+    get:
+      tags: [Payments]
+      summary: List payment/audit records
+      security: [{ adminBearer: [] }]
+      parameters:
+        - name: courseId
+          in: query
+          schema: { type: string }
+        - name: userId
+          in: query
+          schema: { type: string }
+      responses:
+        '200':
+          description: Payments
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Payment' }
+
+  # ══════════════════════════════════════════════════════════════════
+  # Developer Ops
+  # ══════════════════════════════════════════════════════════════════
+  /admin/admins:
+    get:
+      tags: [Developer Ops]
+      summary: List all admin/tutor/developer accounts
+      security: [{ adminBearer: [] }]
+      responses:
+        '200':
+          description: Accounts
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Admin' }
+    post:
+      tags: [Developer Ops]
+      summary: Create an admin account (developer-only)
+      description: |
+        First-admin bootstrap: when the very first admin is created, every
+        pre-existing ownerless course is adopted under that admin (`createdBy` set).
+      security: [{ adminBearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email:    { type: string, format: email }
+                password: { type: string, minLength: 6 }
+                name:     { type: string }
+                role:     { type: string, enum: [admin, tutor], default: admin }
+                scopedCourseIds:
+                  type: array
+                  items: { $ref: '#/components/schemas/ObjectId' }
+                subjectScopes:
+                  type: array
+                  items: { $ref: '#/components/schemas/AdminSubjectScope' }
+      responses:
+        '201':
+          description: Account created; may include adopted-course count
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+                  admin:   { $ref: '#/components/schemas/Admin' }
+                  adoptedCourses: { type: integer }
+
+  /admin/admins/{id}:
+    patch:
+      tags: [Developer Ops]
+      summary: Update an admin (role / scopes)
+      description: Bumps tokenVersion, forcing that admin's active sessions to re-login.
+      security: [{ adminBearer: [] }]
+      parameters: [ { $ref: '#/components/parameters/ObjectIdParam' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                role: { type: string, enum: [admin, tutor] }
+                scopedCourseIds:
+                  type: array
+                  items: { $ref: '#/components/schemas/ObjectId' }
+                subjectScopes:
+                  type: array
+                  items: { $ref: '#/components/schemas/AdminSubjectScope' }
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Admin' }
+    delete:
+      tags: [Developer Ops]
+      summary: Delete an admin (developer only; can't delete yourself or another developer)
+      security: [{ adminBearer: [] }]
+      parameters: [ { $ref: '#/components/parameters/ObjectIdParam' } ]
+      responses:
+        '200': { description: Deleted }
+
+  # ══════════════════════════════════════════════════════════════════
+  # Admin Ops — Tutors, Users, Stats
+  # ══════════════════════════════════════════════════════════════════
+  /admin/my-tutors:
+    get:
+      tags: [Admin Ops]
+      summary: List tutors who touch this admin's courses
+      security: [{ adminBearer: [] }]
+      responses:
+        '200':
+          description: Tutors
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Admin' }
+    post:
+      tags: [Admin Ops]
+      summary: Create a tutor scoped to this admin's courses
+      security: [{ adminBearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password, scopedCourseIds]
+              properties:
+                email:    { type: string, format: email }
+                password: { type: string, minLength: 6 }
+                name:     { type: string }
+                scopedCourseIds:
+                  type: array
+                  items: { $ref: '#/components/schemas/ObjectId' }
+                subjectScopes:
+                  type: array
+                  items: { $ref: '#/components/schemas/AdminSubjectScope' }
+      responses:
+        '201':
+          description: Tutor created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+                  tutor:   { $ref: '#/components/schemas/Admin' }
+
+  /admin/my-tutors/{id}:
+    patch:
+      tags: [Admin Ops]
+      summary: Update your tutor's scope
+      security: [{ adminBearer: [] }]
+      parameters: [ { $ref: '#/components/parameters/ObjectIdParam' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                scopedCourseIds:
+                  type: array
+                  items: { $ref: '#/components/schemas/ObjectId' }
+                subjectScopes:
+                  type: array
+                  items: { $ref: '#/components/schemas/AdminSubjectScope' }
+      responses:
+        '200': { description: Updated }
+    delete:
+      tags: [Admin Ops]
+      summary: Detach tutor from this admin (deletes if no admin still uses them)
+      security: [{ adminBearer: [] }]
+      parameters: [ { $ref: '#/components/parameters/ObjectIdParam' } ]
+      responses:
+        '200': { description: Detached or deleted }
+
+  /admin/users:
+    get:
+      tags: [Admin Ops]
+      summary: List all students
+      security: [{ adminBearer: [] }]
+      responses:
+        '200':
+          description: Users
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/User' }
+
+  /admin/paid-users:
+    get:
+      tags: [Admin Ops]
+      summary: List paying students
+      security: [{ adminBearer: [] }]
+      responses:
+        '200':
+          description: Paying users
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/User' }
+
+  /admin/users/{id}:
+    patch:
+      tags: [Admin Ops]
+      summary: Patch a student's profile
+      security: [{ adminBearer: [] }]
+      parameters: [ { $ref: '#/components/parameters/ObjectIdParam' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/User' }
+      responses:
+        '200': { description: Updated }
+    delete:
+      tags: [Admin Ops]
+      summary: Delete a student
+      security: [{ adminBearer: [] }]
+      parameters: [ { $ref: '#/components/parameters/ObjectIdParam' } ]
+      responses:
+        '200': { description: Deleted }
+
+  /admin/users/{userId}/results:
+    get:
+      tags: [Admin Ops]
+      summary: Test results for a specific student
+      security: [{ adminBearer: [] }]
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Results
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/TestResult' }
+
+  /admin/stats:
+    get:
+      tags: [Admin Ops]
+      summary: High-level stats
+      security: [{ adminBearer: [] }]
+      responses:
+        '200':
+          description: Stats
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  totalUsers:     { type: integer }
+                  paidUsers:      { type: integer }
+                  revenueINR:     { type: integer }
+                  activeSessions: { type: integer }

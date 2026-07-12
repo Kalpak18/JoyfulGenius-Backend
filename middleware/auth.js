@@ -64,11 +64,9 @@ export const verifyUser = async (req, res, next) => {
 };
 
 /**
- * Admin verification:
- * - Verifies token
- * - Ensures admin still exists
+ * Admin verification — allows role "admin" OR "developer".
+ * Verifies token, ensures admin exists, checks token version.
  */
-
 export const verifyAdmin = async (req, res, next) => {
   const authHeader = req.headers.authorization || "";
 
@@ -80,40 +78,67 @@ export const verifyAdmin = async (req, res, next) => {
 
   try {
     const decoded = jwt.verify(token, JWT_SECRET);
-    const id = decoded.sub;   // ✅ use only sub, not id
+    const id = decoded.sub;
 
-    if (!id) {
-      return res.status(401).json({ message: "Invalid token payload." });
-    }
+    if (!id) return res.status(401).json({ message: "Invalid token payload." });
 
-    // ✅ enforce role check
-    if (decoded.role !== "admin") {
+    // /api/admin surface serves admin + tutor. Developers use /api/developer.
+    if (decoded.role !== "admin" && decoded.role !== "tutor") {
       return res.status(403).json({ message: "Not an admin token." });
     }
 
     const admin = await Admin.findById(id).select("-password");
-    if (!admin) {
-      return res.status(403).json({ message: "Unauthorized admin." });
+    if (!admin) return res.status(403).json({ message: "Unauthorized admin." });
+    if (admin.role !== "admin" && admin.role !== "tutor") {
+      return res.status(403).json({ message: "Wrong role for this endpoint." });
     }
 
-    // ✅ enforce token version check
     if (decoded.ver !== (admin.tokenVersion || 0)) {
       return res.status(403).json({ message: "Token revoked. Please login again." });
     }
 
     req.admin = admin;
     req.tokenData = { ver: decoded.ver, role: decoded.role };
-
     return next();
   } catch (err) {
-    const msg =
-      err.name === "TokenExpiredError"
-        ? "Token expired."
-        : "Invalid or expired token.";
+    const msg = err.name === "TokenExpiredError" ? "Token expired." : "Invalid or expired token.";
     return res.status(401).json({ message: msg });
   }
 };
 
+// NOTE: developer-only middleware lives in middleware/verifyDeveloperOnly.js
+// and is used only by routes/DeveloperRoutes.js. This file (auth.js) no longer
+// exports anything developer-related — keeps the admin auth surface clean.
+
+
+/**
+ * Course access gate:
+ * - Must be used AFTER protect / verifyUser (req.user.id must be set)
+ * - Reads courseId from req.params.courseId or req.query.courseId
+ * - Returns 402 if the user hasn't paid for this course
+ */
+export const requireCourseAccess = async (req, res, next) => {
+  try {
+    const courseId = req.params.courseId || req.query.courseId;
+    if (!courseId) return next(); // no courseId to gate on
+
+    const user = await User.findById(req.user.id).select("paidCourses").lean();
+    if (!user) return res.status(401).json({ message: "User not found" });
+
+    const hasPaid = (user.paidCourses || []).some(
+      (pc) => pc.courseId?.toString() === courseId.toString() && pc.isPaid
+    );
+
+    if (!hasPaid) {
+      return res.status(402).json({ message: "Purchase required", courseId });
+    }
+
+    return next();
+  } catch (err) {
+    console.error("requireCourseAccess error:", err);
+    return res.status(500).json({ message: "Server error checking course access" });
+  }
+};
 
 /* ---------------------------
    Legacy (commented) version:

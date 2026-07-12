@@ -12,6 +12,7 @@ export const createSubjectSchema = {
     courseId: objectId,
     name: z.string().trim().min(1, 'Name is required'),
     description: z.string().optional(),
+    thumbnailUrl: z.string().url().optional().or(z.literal('')),
   }),
 };
 
@@ -22,6 +23,7 @@ export const updateSubjectSchema = {
   body: z.object({
     name: z.string().trim().min(1, 'Name is required').optional(),
     description: z.string().optional(),
+    thumbnailUrl: z.string().url().optional().or(z.literal('')),
   }),
 };
 

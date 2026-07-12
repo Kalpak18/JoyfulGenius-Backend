@@ -21,11 +21,18 @@ const validateHierarchy = async (courseId, subjectId, chapterId) => {
 
 export const addQuestion = async (req, res) => {
   try {
-    const { subjectId, chapterId, courseId, question, options, correctAnswer } = req.body;
+    const { subjectId, chapterId, courseId, question, questionImage, options, optionImages, correctAnswer, explanation } = req.body;
 
     await validateHierarchy(courseId, subjectId, chapterId);
 
-    const newQuestion = new Question({ subjectId, chapterId, courseId, question, options, correctAnswer });
+    const newQuestion = new Question({
+      subjectId, chapterId, courseId,
+      question, questionImage: questionImage || "",
+      options,
+      optionImages: optionImages || ["", "", "", ""],
+      correctAnswer,
+      explanation: explanation || "",
+    });
     await newQuestion.save();
 
     res.status(201).json({ message: "Question added successfully", data: newQuestion });
@@ -114,11 +121,16 @@ export const deleteQuestion = async (req, res) => {
 // Update question
 export const updateQuestion = async (req, res) => {
   try {
-    const { question, options, correctAnswer, subjectId, chapterId, courseId } = req.body;
+    const { question, questionImage, options, optionImages, correctAnswer, explanation, subjectId, chapterId, courseId } = req.body;
 
     const updated = await Question.findByIdAndUpdate(
       req.params.id,
-      { question, options, correctAnswer, subjectId, chapterId, courseId },
+      {
+        question, options, correctAnswer, subjectId, chapterId, courseId,
+        ...(questionImage !== undefined && { questionImage }),
+        ...(optionImages   !== undefined && { optionImages }),
+        ...(explanation    !== undefined && { explanation }),
+      },
       { new: true, runValidators: true }
     );
 
@@ -133,6 +145,77 @@ export const updateQuestion = async (req, res) => {
   } catch (error) {
     console.error("Update question error:", error);
     res.status(500).json({ message: "Failed to update question" });
+  }
+};
+
+// Bulk import questions from parsed CSV rows
+// Body: { courseId, subjectId, chapterId, rows: [ { question, questionImage?, option1..4, optionImage1..4?, correctAnswer (1-4) } ] }
+export const bulkImportQuestions = async (req, res) => {
+  try {
+    const { courseId, subjectId, chapterId, rows } = req.body;
+
+    if (!courseId || !subjectId || !chapterId) {
+      return res.status(400).json({ message: "courseId, subjectId, chapterId are required" });
+    }
+    if (!Array.isArray(rows) || rows.length === 0) {
+      return res.status(400).json({ message: "rows[] is required and must not be empty" });
+    }
+
+    await validateHierarchy(courseId, subjectId, chapterId);
+
+    const docs = [];
+    const errors = [];
+
+    rows.forEach((row, idx) => {
+      const rowNum = idx + 2; // +2 because row 1 is header
+      const q = (row.question || "").trim();
+      const opts = [
+        (row.option1 || row.Option1 || "").trim(),
+        (row.option2 || row.Option2 || "").trim(),
+        (row.option3 || row.Option3 || "").trim(),
+        (row.option4 || row.Option4 || "").trim(),
+      ];
+      const correctRaw = row.correctAnswer ?? row.correct_answer ?? row.answer ?? "";
+      const correct = Number(correctRaw);
+
+      if (!q)                           { errors.push(`Row ${rowNum}: question is empty`); return; }
+      if (opts.some(o => !o))           { errors.push(`Row ${rowNum}: one or more options are empty`); return; }
+      if (![1,2,3,4].includes(correct)) { errors.push(`Row ${rowNum}: correctAnswer must be 1-4, got "${correctRaw}"`); return; }
+
+      docs.push({
+        courseId, subjectId, chapterId,
+        question: q,
+        questionImage: (row.questionImage || row.question_image || "").trim(),
+        options: opts,
+        optionImages: [
+          (row.optionImage1 || row.option_image1 || "").trim(),
+          (row.optionImage2 || row.option_image2 || "").trim(),
+          (row.optionImage3 || row.option_image3 || "").trim(),
+          (row.optionImage4 || row.option_image4 || "").trim(),
+        ],
+        correctAnswer: correct - 1, // convert 1-based → 0-based
+        explanation: (row.explanation || row.Explanation || "").trim().slice(0, 2000),
+      });
+    });
+
+    if (docs.length === 0) {
+      return res.status(400).json({ message: "No valid rows found", errors });
+    }
+
+    const inserted = await Question.insertMany(docs, { ordered: false });
+
+    res.status(201).json({
+      message: `${inserted.length} question(s) imported successfully`,
+      imported: inserted.length,
+      skipped: rows.length - inserted.length,
+      errors: errors.length ? errors : undefined,
+    });
+  } catch (err) {
+    console.error("Bulk import error:", err);
+    if (err.insertedDocs) {
+      return res.status(207).json({ message: "Partial import", inserted: err.insertedDocs.length, error: err.message });
+    }
+    res.status(500).json({ message: err.message || "Bulk import failed" });
   }
 };
 

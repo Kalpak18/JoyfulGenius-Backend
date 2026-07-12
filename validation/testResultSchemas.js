@@ -10,7 +10,7 @@ export const saveTheResultSchema = z.object({
     subjectId: objectId,
     score: z.number().int().nonnegative(),
     total: z.number().int().positive(),
-    type: z.enum(["chapter", "mock", "free","master", "manual"]).optional(),
+    type: z.enum(["chapter", "mock", "free", "free_inapp", "master", "master_inapp", "manual", "bundle"]).optional(),
     detailedResults: z
       .array(
         z.object({
@@ -30,7 +30,7 @@ export const getUserResultsSchema = z.object({
     courseId: objectId.optional(),
     subjectId: objectId.optional(),
     chapterId: objectId.optional(),
-    testType: z.enum(["chapter", "mock", "free","master", "manual"]).optional(),
+    testType: z.enum(["chapter", "mock", "free", "free_inapp", "master", "master_inapp", "manual", "bundle"]).optional(),
     
   }),
 });

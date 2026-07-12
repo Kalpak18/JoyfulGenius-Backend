@@ -1,305 +1,374 @@
-import Course from "../models/Course.js";
-import User from "../models/User.js";
-import Chapter from "../models/chapter.js";
-import subject from "../models/subject.js";
+// controllers/CourseController.js
 import mongoose from "mongoose";
+import Course, { slugify } from "../models/Course.js";
+import User       from "../models/User.js";
+import Chapter    from "../models/chapter.js";
+import Subject    from "../models/subject.js";
+import Lecture    from "../models/Lecture.js";
+import Question   from "../models/question.js";
+import TestBundle from "../models/TestBundle.js";
+import Assignment from "../models/Assignment.js";
+import { scopeCourseListFilter } from "../middleware/tutorScope.js";
 
 const toObjectId = (id) => new mongoose.Types.ObjectId(id);
 
-/* Create a new course */
+// Fields admin can set on create/update
+const COURSE_WRITE_FIELDS = [
+  "name", "slug", "description", "language",
+  "thumbnailUrl", "priceINR", "discountINR", "discountPercent",
+  "status", "validityDays", "hasPlayer", "courseType",
+];
+
+// Make sure slug is unique; append -2, -3, ... if needed.
+async function ensureUniqueSlug(base, excludeId = null) {
+  const slug = base || "course";
+  let n = 1;
+  while (true) {
+    const candidate = n === 1 ? slug : `${slug}-${n}`;
+    const q = { slug: candidate };
+    if (excludeId) q._id = { $ne: excludeId };
+    const exists = await Course.findOne(q).select("_id").lean();
+    if (!exists) return candidate;
+    n++;
+    if (n > 200) throw new Error("Could not find a unique slug");
+  }
+}
+
+/* ===========================
+   POST /api/courses
+   Auth: verifyAdmin
+=========================== */
 export const createCourse = async (req, res) => {
-   try {
-    const { name, description, language, autoGenerateUsername, customUsername, noUsername, usernameFormat } = req.body;
+  try {
+    // Only admin role can create courses. Developers manage accounts, not
+    // content. Tutors work inside courses others own.
+    if (req.admin?.role !== "admin") {
+      return res.status(403).json({
+        message: req.admin?.role === "developer"
+          ? "Developers manage accounts, not course content. Log in as an admin to create a course."
+          : "Tutors can't create courses. Ask the course owner.",
+      });
+    }
 
-     const course = new Course({
-      name,
-      description,
-      language,
-      autoGenerateUsername: !!autoGenerateUsername,
-      customUsername: !!customUsername,
-      noUsername: !!noUsername,
-      usernameFormat: usernameFormat || "{serial}.{fname}{lname}.{district}"
-    });
+    const data = {};
+    for (const k of COURSE_WRITE_FIELDS) if (k in req.body) data[k] = req.body[k];
 
-    await course.save();
-    res.status(201).json(course);
+    if (!data.name) return res.status(400).json({ message: "name is required" });
+
+    const baseSlug = slugify(data.slug || data.name);
+    data.slug = await ensureUniqueSlug(baseSlug);
+
+    if (data.priceINR != null) data.priceINR = Number(data.priceINR);
+    if (data.validityDays === "" || data.validityDays == null) data.validityDays = null;
+
+    data.createdBy = req.admin._id;
+    data.updatedBy = req.admin._id;
+
+    const course = await Course.create(data);
+    return res.status(201).json(course);
   } catch (err) {
-    console.error("Error creating course:", err);
-    res.status(500).json({ message: "Failed to create course" });
+    console.error("createCourse error:", err);
+    return res.status(500).json({ message: err.message || "Failed to create course" });
   }
 };
 
-/* -------------------- Update Course -------------------- */
+/* ===========================
+   PUT /api/courses/:courseId
+   Auth: verifyAdmin
+=========================== */
 export const updateCourse = async (req, res) => {
   try {
-    const { id } = req.params;
-    const { name, description, language, autoGenerateUsername, customUsername, noUsername, usernameFormat } = req.body;
+    const { courseId } = req.params;
+    if (!mongoose.isValidObjectId(courseId)) return res.status(400).json({ message: "Invalid id" });
 
-    const updatedCourse = await Course.findByIdAndUpdate(
-      id,
-      {
-        name,
-        description,
-        language,
-       autoGenerateUsername: !!autoGenerateUsername,
-        customUsername: !!customUsername,
-        noUsername: !!noUsername,
-        usernameFormat: usernameFormat || "{serial}.{fname}{lname}.{district}"
-      },
-      { new: true }
-    );
+    const course = await Course.findById(courseId);
+    if (!course) return res.status(404).json({ message: "Course not found" });
 
-    if (!updatedCourse) return res.status(404).json({ message: "Course not found" });
+    for (const k of COURSE_WRITE_FIELDS) if (k in req.body) course[k] = req.body[k];
 
-    res.json(updatedCourse);
+    // Re-slug if slug was explicitly set or name changed without a slug
+    if (req.body.slug || (req.body.name && !req.body.slug)) {
+      const base = slugify(req.body.slug || req.body.name);
+      course.slug = await ensureUniqueSlug(base, course._id);
+    }
+
+    if (req.body.priceINR != null) course.priceINR = Number(req.body.priceINR);
+    if (req.body.validityDays === "" || req.body.validityDays === null) course.validityDays = null;
+
+    course.updatedBy = req.admin?._id;
+    await course.save();
+    return res.json(course);
   } catch (err) {
-    console.error("Error updating course:", err);
-    res.status(500).json({ message: "Failed to update course" });
+    console.error("updateCourse error:", err);
+    return res.status(500).json({ message: err.message || "Failed to update course" });
   }
 };
 
+/* ===========================
+   GET /api/courses/public  — no auth required
+   GET /api/courses          — auth required (same data, kept for back-compat)
+=========================== */
+export const getPublicCourses = async (req, res) => {
+  try {
+    const courses = await Course.find({ status: "published" })
+      .select("_id name slug description language thumbnailUrl courseType priceINR discountINR discountPercent hasPlayer")
+      .sort({ createdAt: -1 });
+    return res.status(200).json(courses);
+  } catch (err) {
+    console.error("Get public courses error:", err);
+    return res.status(500).json({ message: "Failed to fetch courses" });
+  }
+};
 
-/* Get all courses */
 export const getCourses = async (req, res) => {
   try {
-    const courses = await Course.find().sort({ createdAt: -1 });
-    res.status(200).json({ message: "Courses fetched", data: courses });
+    const courses = await Course.find({ status: "published" }).sort({ createdAt: -1 });
+    return res.status(200).json({ message: "Courses fetched", data: courses });
   } catch (err) {
     console.error("Get courses error:", err);
-    res.status(500).json({ message: "Failed to fetch courses" });
+    return res.status(500).json({ message: "Failed to fetch courses" });
   }
 };
 
+/* ===========================
+   GET /api/courses/admin/list
+   Auth: verifyAdmin — includes drafts + archived
+=========================== */
+export const listCoursesForAdmin = async (req, res) => {
+  try {
+    // Admins see their own courses (createdBy match).
+    // Tutors see courses in scopedCourseIds.
+    // Developers see nothing (they don't manage course content).
+    const filter = scopeCourseListFilter(req.admin);
+    const courses = await Course.find(filter).sort({ createdAt: -1 }).lean();
+    return res.json({ data: courses });
+  } catch (err) {
+    console.error("listCoursesForAdmin error:", err);
+    return res.status(500).json({ message: "Failed to fetch courses" });
+  }
+};
 
-
-/* Enroll a user into a course */
+/* ===========================
+   POST /api/courses/visit-course
+=========================== */
 export const enrollUser = async (req, res) => {
   try {
     const { courseId, userId } = req.body;
-
-    const [course, user] = await Promise.all([
-      Course.findById(courseId),
-      User.findById(userId),
-    ]);
-
+    const course = await Course.findById(courseId).select("_id enrolledUsers").lean();
     if (!course) return res.status(404).json({ message: "Course not found" });
-    if (!user) return res.status(404).json({ message: "User not found" });
 
-    // Add to Course.enrolledUsers (optional, if you still want it)
-    if (!course.enrolledUsers.includes(userId)) {
-      course.enrolledUsers.push(userId);
-      await course.save();
+    // Track visit on the course doc only — do NOT add to user.paidCourses with isPaid:false
+    // (that array is payment-only; mixing visit-tracking in it causes false negatives in access checks)
+    const alreadyTracked = course.enrolledUsers?.some(id => id.toString() === userId);
+    if (!alreadyTracked) {
+      await Course.updateOne(
+        { _id: courseId },
+        { $addToSet: { enrolledUsers: userId } }
+      );
     }
-
-    // Add to User.paidCourses if not exists
-    const alreadyEnrolled = user.paidCourses.find(pc => pc.courseId.toString() === courseId);
-    if (!alreadyEnrolled) {
-      user.paidCourses.push({
-        courseId,
-        isPaid: false,
-        username: null,
-        progress: {},
-        testResults: []
-      });
-      await user.save();
-    }
-
-    res.status(200).json({ message: "User enrolled in course" });
+    return res.status(200).json({ message: "Visit tracked" });
   } catch (err) {
     console.error("Enroll user error:", err);
-    res.status(500).json({ message: "Failed to enroll user" });
+    return res.status(500).json({ message: "Failed to track visit" });
   }
 };
 
-
-/* Delete course and related chapters */
+/* ===========================
+   DELETE /api/courses/:courseId
+   Cascades subjects, chapters, lectures.
+=========================== */
 export const deleteCourse = async (req, res) => {
   try {
     const { courseId } = req.params;
+    if (!mongoose.isValidObjectId(courseId)) return res.status(400).json({ message: "Invalid id" });
 
     const course = await Course.findByIdAndDelete(courseId);
-    if (!course) {
-      return res.status(404).json({ message: "Course not found" });
-    }
+    if (!course) return res.status(404).json({ message: "Course not found" });
 
-    // delete related chapters and subjects
-    await Chapter.deleteMany({ courseId: toObjectId(courseId) });
-    await subject.deleteMany({ courseId: toObjectId(courseId) });
+    const oid = toObjectId(courseId);
+    await Promise.all([
+      Chapter.deleteMany({ courseId: oid }),
+      Subject.deleteMany({ courseId: oid }),
+      Question.deleteMany({ courseId: oid }),
+      TestBundle.deleteMany({ courseId: oid }),
+      Assignment.deleteMany({ courseId: oid }),
+      Lecture.updateMany({ courseId: oid }, { $set: { deletedAt: new Date() } }),
+    ]);
 
-    return res.status(200).json({ message: "Course and related subjects & chapters deleted" });
+    return res.status(200).json({ message: "Course and related content deleted" });
   } catch (err) {
     console.error("Delete course error:", err.message || err);
     return res.status(500).json({ message: "Failed to delete course", error: err.message });
   }
 };
 
-
-/**
- * Fetch all courses for the user
- */
-
+/* ===========================
+   GET /api/courses/user/courses
+=========================== */
 export const getCoursesForUser = async (req, res) => {
   try {
     const user = await User.findById(req.user.id);
     if (!user) return res.status(404).json({ message: "User not found" });
 
-    // Optional: frontend can send custom order of course names
-    const { order } = req.body; // e.g., { order: ["NMMS", "Homibhabha"] }
-
+    const { order } = req.body;
     let courses;
     if (Array.isArray(order) && order.length > 0) {
-      // Fetch only courses in the order array
-      const fetchedCourses = await Course.find({ name: { $in: order } });
-
-      // Preserve the sequence
-      courses = order
-        .map(name => fetchedCourses.find(c => c.name === name))
-        .filter(Boolean); // remove any names not found in DB
+      const fetched = await Course.find({ name: { $in: order }, status: "published" });
+      courses = order.map(n => fetched.find(c => c.name === n)).filter(Boolean);
     } else {
-      // Default: all courses sorted by createdAt
-      courses = await Course.find().sort({ createdAt: -1 });
+      courses = await Course.find({ status: "published" }).sort({ createdAt: -1 });
     }
 
-    const coursesWithStatus = courses.map(course => {
+    const out = courses.map(course => {
       const paidInfo = user.paidCourses.find(pc => pc.courseId.toString() === course._id.toString());
       return {
-        _id: course._id,
-        name: course.name,
-        description: course.description,
-        language: course.language,
-        autoGenerateUsername: course.autoGenerateUsername,
-        customUsername: course.customUsername,
-        noUsername: course.noUsername,
-        usernameFormat: course.usernameFormat,
-        isPaid: paidInfo?.isPaid || false,
-        username: paidInfo?.username || null,
-        paidAt: paidInfo?.paidAt || null
+        _id:             course._id,
+        name:            course.name,
+        slug:            course.slug,
+        description:     course.description,
+        language:        course.language,
+        thumbnailUrl:    course.thumbnailUrl,
+        priceINR:        course.priceINR,
+        discountINR:     course.discountINR ?? 0,
+        discountPercent: course.discountPercent ?? 0,
+        status:          course.status,
+        hasPlayer:       course.hasPlayer !== false,
+        courseType:      course.courseType,
+        isPaid:          paidInfo?.isPaid || false,
+        paidAt:          paidInfo?.paidAt || null,
       };
     });
 
-    res.status(200).json({ message: "Courses fetched", data: coursesWithStatus });
+    return res.status(200).json({ message: "Courses fetched", data: out });
   } catch (err) {
     console.error("Get courses for user error:", err);
-    res.status(500).json({ message: "Failed to fetch courses" });
+    return res.status(500).json({ message: "Failed to fetch courses" });
   }
 };
 
+/* ===========================
+   GET /api/courses/user/course/:slugOrName
+=========================== */
 export const getCourseByNameForUser = async (req, res) => {
   try {
     const { coursename } = req.params;
     const user = await User.findById(req.user.id);
     if (!user) return res.status(404).json({ message: "User not found" });
 
-    const course = await Course.findOne({ name: coursename.trim() });
+    const course = await Course.findOne({
+      $or: [{ slug: coursename.toLowerCase() }, { name: coursename.trim() }],
+    });
     if (!course) return res.status(404).json({ message: "Course not found" });
 
     const paidInfo = user.paidCourses.find(pc => pc.courseId.toString() === course._id.toString());
-
-    res.status(200).json({
-      _id: course._id,
-      name: course.name,
-      description: course.description,
-      language: course.language,
-      autoGenerateUsername: course.autoGenerateUsername,
-      customUsername: course.customUsername,
-      noUsername: course.noUsername,
-      usernameFormat: course.usernameFormat,
-      isPaid: !!paidInfo,
-      username: paidInfo?.username || null,
-      paidAt: paidInfo?.paidAt || null
+    return res.status(200).json({
+      _id:             course._id,
+      name:            course.name,
+      slug:            course.slug,
+      description:     course.description,
+      language:        course.language,
+      thumbnailUrl:    course.thumbnailUrl,
+      priceINR:        course.priceINR,
+      discountINR:     course.discountINR ?? 0,
+      discountPercent: course.discountPercent ?? 0,
+      hasPlayer:       course.hasPlayer !== false,
+      courseType:      course.courseType,
+      isPaid:          !!paidInfo?.isPaid,
+      paidAt:          paidInfo?.paidAt || null,
     });
   } catch (err) {
     console.error("Get course by name error:", err);
-    res.status(500).json({ message: "Failed to fetch course" });
+    return res.status(500).json({ message: "Failed to fetch course" });
   }
 };
 
-// export const getUsersByCourse = async (req, res) => {
-//   try {
-//     const { courseId } = req.params;
+/* ===========================
+   GET /api/courses/:courseId/access
+   Auth: protect
+   Returns fresh server-side access status so frontend never relies on
+   stale localStorage for the paywall decision.
+=========================== */
+export const getCourseAccess = async (req, res) => {
+  try {
+    const { courseId } = req.params;
+    if (!mongoose.isValidObjectId(courseId)) {
+      return res.status(400).json({ message: "Invalid courseId" });
+    }
 
-//     // Ensure course exists
-//     const course = await Course.findById(courseId);
-//     if (!course) return res.status(404).json({ message: "Course not found" });
+    const [course, user] = await Promise.all([
+      Course.findById(courseId)
+        .select("name slug description language thumbnailUrl priceINR discountINR discountPercent status courseType validityDays hasPlayer")
+        .lean(),
+      User.findById(req.user.id).select("paidCourses").lean(),
+    ]);
 
-//     // Find all users enrolled in this course
-//     const users = await User.find({ "paidCourses.courseId": courseId })
-//       .select("name email paidCourses");
+    if (!course) return res.status(404).json({ message: "Course not found" });
+    if (!user)   return res.status(401).json({ message: "User not found" });
 
-//     // Extract only this course’s enrollment info
-//     const formatted = users.map(u => {
-//       const enrollment = u.paidCourses.find(pc => pc.courseId.toString() === courseId);
-//       return {
-//         userId: u._id,
-//         name: u.name,
-//         email: u.email,
-//         username: enrollment?.username || null,
-//         isPaid: enrollment?.isPaid || false,
-//         serial: enrollment?.serial || null,
-//         progress: enrollment?.progress || {},
-//         testResults: enrollment?.testResults || []
-//       };
-//     });
+    if (course.status === "draft") {
+      return res.status(404).json({ message: "Course not available" });
+    }
 
-//     res.json(formatted);
-//   } catch (err) {
-//     res.status(500).json({ message: "Server error", error: err.message });
-//   }
-// };
+    const isFree = !course.priceINR || course.priceINR <= 0;
+    const paidEntry = (user.paidCourses || []).find(
+      (pc) => pc.courseId?.toString() === courseId && pc.isPaid === true
+    );
 
-// PATCH update user info in a specific course
+    // Check if paid access has expired (validityDays from paidAt)
+    let paidValid = !!paidEntry;
+    if (paidEntry && course.validityDays && paidEntry.paidAt) {
+      const expiry = new Date(paidEntry.paidAt);
+      expiry.setDate(expiry.getDate() + course.validityDays);
+      if (new Date() > expiry) paidValid = false;
+    }
+
+    const isPaid = isFree || paidValid;
+
+    return res.status(200).json({
+      course,
+      isPaid,
+      isFree,
+      paidAt:    paidEntry?.paidAt    || null,
+      expiresAt: paidEntry?.paidAt && course.validityDays
+        ? new Date(new Date(paidEntry.paidAt).setDate(new Date(paidEntry.paidAt).getDate() + course.validityDays))
+        : null,
+    });
+  } catch (err) {
+    console.error("getCourseAccess error:", err);
+    return res.status(500).json({ message: "Failed to check course access" });
+  }
+};
+
 export const updateUserInCourse = async (req, res) => {
   try {
     const { courseId, userId } = req.params;
-    const { isPaid, username, progress, testResults } = req.body;
-
+    const { isPaid, progress, testResults } = req.body;
     const user = await User.findById(userId);
     if (!user) return res.status(404).json({ message: "User not found" });
-
-    // Find enrollment entry
     const enrollment = user.paidCourses.find(pc => pc.courseId.toString() === courseId);
-    if (!enrollment) {
-      return res.status(400).json({ message: "User not enrolled in this course" });
-    }
-
-    // Update only fields for this course
+    if (!enrollment) return res.status(400).json({ message: "User not enrolled in this course" });
     if (typeof isPaid !== "undefined") enrollment.isPaid = isPaid;
-    if (typeof username !== "undefined") enrollment.username = username;
     if (progress) enrollment.progress = progress;
     if (testResults) enrollment.testResults = testResults;
-
     await user.save();
-
-    res.json({ message: "User updated for this course", enrollment });
+    return res.json({ message: "User updated for this course", enrollment });
   } catch (err) {
-    res.status(500).json({ message: "Server error", error: err.message });
+    return res.status(500).json({ message: "Server error", error: err.message });
   }
 };
 
-// Controller
 export const removeUserFromCourse = async (req, res) => {
   try {
     const { courseId, userId } = req.params;
-
-    const [course, user] = await Promise.all([
-      Course.findById(courseId),
-      User.findById(userId),
-    ]);
-
-    if (!course || !user) 
-      return res.status(404).json({ message: "Course or user not found" });
-
-    // Remove userId from course.enrolledUsers
+    const [course, user] = await Promise.all([Course.findById(courseId), User.findById(userId)]);
+    if (!course || !user) return res.status(404).json({ message: "Course or user not found" });
     course.enrolledUsers = course.enrolledUsers.filter(id => id.toString() !== userId);
     await course.save();
-
-    // Remove the enrollment entry in user.paidCourses for this course
     user.paidCourses = user.paidCourses.filter(pc => pc.courseId.toString() !== courseId);
     await user.save();
-
-    res.status(200).json({ message: "User removed from course" });
+    return res.status(200).json({ message: "User removed from course" });
   } catch (err) {
     console.error("Error removing user from course:", err);
-    res.status(500).json({ message: "Server error", error: err.message });
+    return res.status(500).json({ message: "Server error", error: err.message });
   }
 };

@@ -58,12 +58,13 @@ if (!courseId || !subjectId || !chapterId || !title?.trim() || !type) {
 
 export const listMaterials = async (req, res) => {
   try {
-    const { courseId, subjectId, chapterId, page = 1, limit = 20 } = req.query;
+    const { courseId, subjectId, chapterId, page = 1, limit = 20, flat } = req.query;
+    const wantsFlat = flat === "true" || flat === "1";
     const filter = {};
 
-    if (courseId) filter.courseId = new mongoose.Types.ObjectId(courseId);
-    if (subjectId) filter.subjectId = new mongoose.Types.ObjectId(subjectId);
-    if (chapterId) filter.chapterId = new mongoose.Types.ObjectId(chapterId);
+    if (courseId && mongoose.isValidObjectId(courseId)) filter.courseId = new mongoose.Types.ObjectId(courseId);
+    if (subjectId && mongoose.isValidObjectId(subjectId)) filter.subjectId = new mongoose.Types.ObjectId(subjectId);
+    if (chapterId && mongoose.isValidObjectId(chapterId)) filter.chapterId = new mongoose.Types.ObjectId(chapterId);
 
     // Fetch all filtered materials with lookups
     const materials = await StudyMaterial.aggregate([
@@ -112,6 +113,31 @@ export const listMaterials = async (req, res) => {
         },
       },
     ]);
+
+    // Flat mode: return the materials as a flat array (for the student list UI).
+    // Adds friendly fields (`chapter`, `subject`) so the frontend can render
+    // without knowing about the aggregation shape.
+    if (wantsFlat) {
+      const flatList = materials.map((m) => ({
+        _id: m._id,
+        title: m.title,
+        type: m.type,
+        youtubeLink: m.youtubeLink,
+        downloadable: m.downloadable,
+        createdAt: m.createdAt,
+        courseId: m.courseId,
+        course: m.courseTitle || "",
+        subjectId: m.subjectId,
+        subject: m.subject || "",
+        chapterId: m.chapterId,
+        chapter: m.chapterTitle || "",
+        fileUrl: m.type !== "youtube" ? `/api/materials/${m._id}/stream` : null,
+      }));
+      return res.status(200).json({
+        total: flatList.length,
+        data: flatList,
+      });
+    }
 
     // Group materials: Course → Subject → Chapter → Materials
     const coursesMap = {};

@@ -47,6 +47,8 @@ const StudyMaterialSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+StudyMaterialSchema.index({ courseId: 1, subjectId: 1, chapterId: 1 });
+
 // Validation: Require fileId for pdf/video, youtubeLink for youtube
 StudyMaterialSchema.pre("validate", function (next) {
   if ((this.type === "pdf" || this.type === "video") && !this.fileId) {

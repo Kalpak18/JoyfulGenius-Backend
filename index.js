@@ -1,6 +1,9 @@
 import dotenv from 'dotenv';
 dotenv.config();
 
+import { initSentry, Sentry } from './config/sentry.js';
+initSentry(); // must be called before any other imports that might throw
+
 import express from 'express';
 import cors from 'cors';
 import path from 'path';
@@ -10,7 +13,7 @@ import cookieParser from "cookie-parser";
 import morgan from 'morgan';
 import fs from 'fs';
 import { createStream } from 'rotating-file-stream';
-import rateLimit from 'express-rate-limit';
+import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
 import { fileURLToPath } from "url";
 import mongoose from 'mongoose';
 
@@ -24,9 +27,9 @@ import { initGridFS } from './config/gridfs.js';
 import { env } from './config/validateEnv.js';
 
 import userRoutes from './routes/UserRoutes.js';
-import otpRoutes from './routes/otpRoutes.js';
 import subjectRoutes from './routes/subjectRoutes.js';
 import adminRoutes from './routes/adminRoutes.js';
+import developerRoutes from './routes/DeveloperRoutes.js';
 import authRoutes from "./routes/authRoutes.js";
 import testResultRoutes from './routes/testResultRoutes.js';
 import questionRoutes from './routes/questionRoutes.js';
@@ -34,10 +37,21 @@ import testRoutes from './routes/testRoutes.js';
 import studyMaterialRoutes from "./routes/StudyMaterialRoutes.js";
 import chapterRoutes from "./routes/chapterRoutes.js";
 import courseRoutes from "./routes/courseRoutes.js";
+import paymentRoutes from "./routes/paymentRoutes.js";
+import { studentRouter as lectureStudentRoutes, adminRouter as lectureAdminRoutes } from "./routes/lectureRoutes.js";
+import { studentRouter as assignmentStudentRoutes, adminRouter as assignmentAdminRoutes } from "./routes/assignmentRoutes.js";
+import testBundleRoutes from "./routes/testBundleRoutes.js";
 import errorHandler from './middleware/errorHandler.js';
 
 const { NODE_ENV, FRONTEND_URL, PORT } = env;
 const PROD_DOMAIN = FRONTEND_URL?.trim().replace(/^https?:\/\//, '');
+
+// Surface monitoring/payment misconfig loudly in production so it can't ship silently broken.
+if (NODE_ENV === 'production') {
+  if (!env.SENTRY_DSN) console.warn('[startup] SENTRY_DSN not set — error monitoring is DISABLED in production.');
+  if (!env.RAZORPAY_WEBHOOK_SECRET) console.warn('[startup] RAZORPAY_WEBHOOK_SECRET not set — webhook signature verification will reject all events.');
+  if (String(env.RAZORPAY_KEY_ID || '').startsWith('rzp_test_')) console.warn('[startup] Razorpay is still in TEST mode (rzp_test_*). Real customers will not be charged.');
+}
 
 connectDB();
 const app = express();
@@ -49,6 +63,13 @@ if (NODE_ENV === "production") {
 
 // disable x-powered-by
 app.disable('x-powered-by');
+
+// ------------------- SENTRY REQUEST HANDLER -------------------
+// Must be first middleware before routes
+if (Sentry?.Handlers?.requestHandler) {
+  app.use(Sentry.Handlers.requestHandler());
+  app.use(Sentry.Handlers.tracingHandler());
+}
 
 // ------------------- LOGGING -------------------
 const logDirectory = path.join(process.cwd(), 'logs');
@@ -153,9 +174,21 @@ app.use(cors(corsDelegate));
 app.options("*", cors(corsDelegate)); // handle preflights
 
 // ------------------- RATE LIMITING -------------------
+// Prod: 200 req / 15 min per IP. Dev: 5000 so debugging doesn't get blocked.
+// Public read endpoints (course catalog, health) skip the counter entirely
+// so a React re-render loop can't lock the whole app out.
+const GLOBAL_SKIP = [
+  "/api/courses/public",
+  "/api/subjects/grouped",
+  "/health",
+  "/health/full",
+  "/api/docs",
+  "/api/docs.json",
+];
 const globalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 200,
+  max: NODE_ENV === "production" ? 200 : 5000,
+  skip: (req) => GLOBAL_SKIP.some((p) => req.originalUrl.startsWith(p)),
   handler: (req, res) => {
     const logEntry = `[${new Date().toISOString()}] RATE_LIMIT_GLOBAL: ${req.ip} - ${req.originalUrl}\n`;
     securityLogStream.write(logEntry);
@@ -165,9 +198,11 @@ const globalLimiter = rateLimit({
 });
 app.use(globalLimiter);
 
+// Auth rate limit — stricter in production, relaxed in dev so debugging
+// doesn't get blocked. Bump max to 50/5min locally.
 const authLimiter = rateLimit({
   windowMs: 5 * 60 * 1000,
-  max: 5,
+  max: NODE_ENV === "production" ? 5 : 50,
   handler: (req, res) => {
     const logEntry = `[${new Date().toISOString()}] RATE_LIMIT_AUTH: ${req.ip} - ${req.originalUrl}\n`;
     securityLogStream.write(logEntry);
@@ -175,36 +210,108 @@ const authLimiter = rateLimit({
     res.status(429).json({ message: "Too many login/OTP attempts. Try again later." });
   }
 });
-// apply to OTP and auth endpoints (login)
-// app.use(['/api/otp', '/api/auth', '/api/admin'], authLimiter);
+// Apply to auth and admin login endpoints
+app.use(['/api/auth/login', '/api/users/login', '/api/users/forgot-password', '/api/admin/login', '/api/admin/forgot-password', '/api/developer/login', '/api/developer/register'], authLimiter);
+
+// Tighter limit for payment-creating endpoints (defense-in-depth on top of Razorpay's own throttling).
+// Webhook is mounted with raw body BEFORE app.use(express.json) and is excluded here on purpose —
+// Razorpay retries webhooks aggressively and we don't want to 429 them.
+const paymentLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 10,
+  handler: (req, res) => {
+    const logEntry = `[${new Date().toISOString()}] RATE_LIMIT_PAYMENT: ${req.ip} - ${req.originalUrl}\n`;
+    securityLogStream.write(logEntry);
+    alertsLogStream.write(logEntry);
+    res.status(429).json({ message: "Too many payment requests. Please wait a minute and try again." });
+  }
+});
+app.use(['/api/payments/order', '/api/payments/verify'], paymentLimiter);
+
+// Per-user assignment-submit throttle — prevents accidental rapid-fire double-submits.
+const assignmentSubmitLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 10,
+  keyGenerator: (req, res) => req.user?.id || ipKeyGenerator(req, res),
+  handler: (req, res) => {
+    const logEntry = `[${new Date().toISOString()}] RATE_LIMIT_ASSIGNMENT_SUBMIT: ${req.user?.id || req.ip} - ${req.originalUrl}\n`;
+    securityLogStream.write(logEntry);
+    res.status(429).json({ message: "Too many submissions in a short time. Please wait a minute." });
+  }
+});
+app.use('/api/assignments/:id/submit', assignmentSubmitLimiter);
 
 // ------------------- BODY PARSERS -------------------
-// Limit payload size
-// Only capture rawBody for possible webhooks (signature header) to avoid memory bloat
+// Razorpay webhook must be mounted BEFORE express.json so we can verify the
+// raw body signature. We mount it with express.raw on that specific path.
+import { verifyWebhookSignature, handleWebhook } from "./controllers/paymentController.js";
+app.post(
+  "/api/payments/webhook",
+  express.raw({ type: "application/json" }),
+  verifyWebhookSignature,
+  handleWebhook
+);
+
+// Limit payload size on regular JSON routes
 app.use(express.json({
   limit: '10mb',
   verify: (req, res, buf) => {
     const sig = req.headers['x-signature'] || req.headers['stripe-signature'] || req.headers['x-hub-signature'];
     if (sig) {
-      // keep raw Buffer for signature verification on routes that actually use it
       req.rawBody = buf;
     }
   }
 }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
+// ------------------- API DOCS (Swagger UI) -------------------
+// Loaded lazily so an unparseable spec doesn't kill the server. Gated in prod
+// by SWAGGER_ENABLED so we don't advertise the API surface publicly.
+{
+  const docsEnabled = NODE_ENV !== 'production' || process.env.SWAGGER_ENABLED === 'true';
+  if (docsEnabled) {
+    try {
+      const [{ default: swaggerUi }, { default: YAML }, { readFileSync }, { fileURLToPath }] = await Promise.all([
+        import('swagger-ui-express'),
+        import('yaml'),
+        import('fs'),
+        import('url'),
+      ]);
+      const path = await import('path');
+      const __filename = fileURLToPath(import.meta.url);
+      const __dirname  = path.dirname(__filename);
+      const specPath   = path.join(__dirname, 'docs', 'openapi.yaml');
+      const spec       = YAML.parse(readFileSync(specPath, 'utf8'));
+      app.get('/api/docs.json', (_req, res) => res.json(spec));
+      app.use('/api/docs', swaggerUi.serve, swaggerUi.setup(spec, {
+        customSiteTitle: 'JoyfulGenius API',
+        swaggerOptions: { persistAuthorization: true, docExpansion: 'none', tagsSorter: 'alpha' },
+      }));
+      console.log(`📖 Swagger docs available at /api/docs`);
+    } catch (err) {
+      console.warn('⚠️  Swagger UI disabled — could not load spec:', err.message);
+    }
+  }
+}
+
 // ------------------- API ROUTES -------------------
 app.use('/api/users', userRoutes);
-app.use('/api/otp', otpRoutes);
 app.use('/api/subjects', subjectRoutes);
 app.use('/api/chapters', chapterRoutes);
 app.use('/api/questions', questionRoutes);
+app.use('/api/developer', developerRoutes);
 app.use('/api/admin', adminRoutes);
 app.use("/api/auth", authRoutes);
 app.use('/api/results', testResultRoutes);
 app.use("/api/tests", testRoutes);
 app.use("/api/materials", studyMaterialRoutes);
 app.use('/api/courses', courseRoutes);
+app.use('/api/payments', paymentRoutes);
+app.use('/api/lectures', lectureStudentRoutes);   // student GET
+app.use('/api/admin',    lectureAdminRoutes);     // admin writes + presign
+app.use('/api/bundles',  testBundleRoutes);       // test bundles (test_series)
+app.use('/api/assignments', assignmentStudentRoutes);   // student: list/submit/view
+app.use('/api/admin',       assignmentAdminRoutes);     // admin: CRUD + submissions
 
 // ------------------- STATIC FILES -------------------
 const __filename = fileURLToPath(import.meta.url);
@@ -212,16 +319,59 @@ const __dirname = path.dirname(__filename);
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // ------------------- HEALTH CHECK -------------------
+// Lightweight liveness probe — used by Render/uptime monitors.
 app.get('/health', (req, res) => {
   res.json({
     uptime: process.uptime(),
     env: NODE_ENV,
-    dbState: mongoose.connection.readyState
+    dbState: mongoose.connection.readyState, // 1 = connected
+  });
+});
+
+// Pre-flight check — surfaces what is wired/unwired so you can verify the
+// production environment in one HTTP call. Does NOT leak secret values.
+// In production the endpoint requires `?key=<HEALTH_TOKEN>` (set via env).
+// If HEALTH_TOKEN is unset in production the endpoint returns 404.
+app.get('/health/full', (req, res) => {
+  if (NODE_ENV === 'production') {
+    const expected = env.HEALTH_TOKEN;
+    if (!expected || req.query.key !== expected) {
+      return res.status(404).json({ message: 'Not found' });
+    }
+  }
+  const razorpayMode =
+    !env.RAZORPAY_KEY_ID ? 'unset'
+      : String(env.RAZORPAY_KEY_ID).startsWith('rzp_live_') ? 'live'
+      : String(env.RAZORPAY_KEY_ID).startsWith('rzp_test_') ? 'test'
+      : 'unknown';
+  res.json({
+    uptime:  process.uptime(),
+    env:     NODE_ENV,
+    db:      { state: mongoose.connection.readyState, name: mongoose.connection.name || null },
+    sentry:  { wired: Boolean(env.SENTRY_DSN) },
+    razorpay: {
+      mode:           razorpayMode,
+      webhookSecret:  Boolean(env.RAZORPAY_WEBHOOK_SECRET),
+    },
+    email: {
+      provider:    env.EMAIL_PROVIDER,
+      resendKey:   Boolean(env.RESEND_API_KEY),
+      sendgridKey: Boolean(env.SENDGRID_API_KEY),
+    },
+    aws: {
+      bucketSet: Boolean(env.AWS_S3_BUCKET),
+      region:    env.AWS_REGION || null,
+    },
   });
 });
 
 // ------------------- FALLBACK & ERROR HANDLER -------------------
 app.use((req, res) => res.status(404).json({ message: "Not found" }));
+
+// Sentry must come before our custom error handler
+if (Sentry?.Handlers?.errorHandler) {
+  app.use(Sentry.Handlers.errorHandler());
+}
 app.use(errorHandler);
 
 // ------------------- START SERVER + GRACEFUL SHUTDOWN -------------------

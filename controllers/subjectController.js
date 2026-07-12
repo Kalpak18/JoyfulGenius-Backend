@@ -5,7 +5,7 @@ import Course from "../models/Course.js";
 // ✅ Add Subject (linked to a valid course)
 export const createSubject = async (req, res) => {
   try {
-    const { name, description, courseId } = req.body;
+    const { name, description, courseId, thumbnailUrl } = req.body;
 
     // Check if course exists
     const courseExists = await Course.findById(courseId);
@@ -16,7 +16,8 @@ export const createSubject = async (req, res) => {
     const subject = new Subject({
       name,
       description,
-      courseId
+      courseId,
+      thumbnailUrl: thumbnailUrl || '',
     });
 
     await subject.save();
@@ -73,11 +74,14 @@ export const getSubject = async (req, res) => {
 // ✅ Update subject
 export const updateSubject = async (req, res) => {
   try {
-    const { name, description, courseId } = req.body;
+    const { name, description, courseId, thumbnailUrl } = req.body;
+
+    const update = { name, description, courseId };
+    if (thumbnailUrl !== undefined) update.thumbnailUrl = thumbnailUrl;
 
     const subject = await Subject.findByIdAndUpdate(
       req.params.id,
-      { name, description, courseId },
+      update,
       { new: true }
     );
 
