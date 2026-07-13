@@ -264,7 +264,8 @@ export const registerUser = async (req, res) => {
         buildOtpEmail(otp, f_name)
       );
     } catch (mailErr) {
-      console.error("Email OTP send failed:", mailErr.message);
+      console.error("Email OTP send failed:", mailErr.message, mailErr.response || mailErr.responseCode || "");
+      console.error("Email config — provider:", process.env.EMAIL_PROVIDER, "| from:", process.env.EMAIL_USER || "resend");
       // In development, don't block registration if SMTP is broken —
       // print the OTP to the server log and return it in the response.
       // In production, fail hard so students can't get stuck without email.
