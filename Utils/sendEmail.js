@@ -13,11 +13,10 @@ const { EMAIL_USER, EMAIL_PASS, EMAIL_PROVIDER, RESEND_API_KEY, SENDGRID_API_KEY
 
 function createTransport() {
   if (EMAIL_PROVIDER === "resend") {
-    // Resend uses SMTP compatible interface with api key as password
     return nodemailer.createTransport({
       host: "smtp.resend.com",
-      port: 465,
-      secure: true,
+      port: 587,
+      secure: false,
       auth: { user: "resend", pass: RESEND_API_KEY },
     });
   }
