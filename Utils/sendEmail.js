@@ -42,7 +42,7 @@ const transporter = createTransport();
 
 const FROM_ADDRESS =
   EMAIL_PROVIDER === "resend" || EMAIL_PROVIDER === "sendgrid"
-    ? `"Joyful Genius" <noreply@joyfulgenius.in>`
+    ? `"Joyful Genius" <noreply@joyfulgenius.org>`
     : `"Joyful Genius" <${EMAIL_USER}>`;
 
 /**
