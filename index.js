@@ -324,6 +324,17 @@ app.get('/', (req, res) => {
   res.json({ status: 'ok', service: 'JoyfulGenius API' });
 });
 
+// Temporary email debug route — remove after confirming email works
+app.get('/debug-email', async (req, res) => {
+  try {
+    const sendEmail = (await import('./Utils/sendEmail.js')).default;
+    await sendEmail('bhoirkalpak916@gmail.com', 'JG Email Test', 'If you see this, email works!');
+    res.json({ ok: true, provider: process.env.EMAIL_PROVIDER, from: 'noreply@joyfulgenius.org' });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message, response: e.response || null, provider: process.env.EMAIL_PROVIDER });
+  }
+});
+
 // Lightweight liveness probe — used by Render/uptime monitors.
 app.get('/health', (req, res) => {
   res.json({
