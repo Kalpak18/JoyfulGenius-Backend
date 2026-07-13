@@ -1,61 +1,74 @@
 // Utils/sendEmail.js
 //
 // Provider-agnostic email sender.
-// Set EMAIL_PROVIDER=smtp (default/Gmail), resend, or sendgrid in .env
-// to switch without touching this file or any caller.
+// Set EMAIL_PROVIDER=resend (production) or smtp (local Gmail) in .env.
+// Resend uses their HTTP API — not SMTP — so it works on Render/any host.
 //
 import nodemailer from 'nodemailer';
 import { env } from '../config/validateEnv.js';
 
 const { EMAIL_USER, EMAIL_PASS, EMAIL_PROVIDER, RESEND_API_KEY, SENDGRID_API_KEY } = env;
 
-// ─── Transport factory ─────────────────────────────────────────────────────
-
-function createTransport() {
-  if (EMAIL_PROVIDER === "resend") {
-    return nodemailer.createTransport({
-      host: "smtp.resend.com",
-      port: 587,
-      secure: false,
-      auth: { user: "resend", pass: RESEND_API_KEY },
-    });
-  }
-
-  if (EMAIL_PROVIDER === "sendgrid") {
-    return nodemailer.createTransport({
-      host: "smtp.sendgrid.net",
-      port: 465,
-      secure: true,
-      auth: { user: "apikey", pass: SENDGRID_API_KEY },
-    });
-  }
-
-  // Default: Gmail SMTP (good for dev; switch to Resend/SendGrid for production)
-  return nodemailer.createTransport({
-    service: "gmail",
-    auth: { user: EMAIL_USER, pass: EMAIL_PASS },
-  });
-}
-
-const transporter = createTransport();
-
 const FROM_ADDRESS =
   EMAIL_PROVIDER === "resend" || EMAIL_PROVIDER === "sendgrid"
     ? `"Joyful Genius" <noreply@joyfulgenius.org>`
     : `"Joyful Genius" <${EMAIL_USER}>`;
 
-/**
- * sendEmail(to, subject, text, html?)
- * Plain-text fallback always included; pass html for rich emails.
- */
-const sendEmail = async (to, subject, text, html) => {
-  await transporter.sendMail({
-    from: FROM_ADDRESS,
-    to,
-    subject,
-    text,
+// ─── Resend HTTP API (no SMTP — works on all cloud hosts) ──────────────────
+
+async function sendViaResend(to, subject, text, html) {
+  const res = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${RESEND_API_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      from: FROM_ADDRESS,
+      to: [to],
+      subject,
+      text,
+      ...(html ? { html } : {}),
+    }),
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`Resend API error ${res.status}: ${body}`);
+  }
+}
+
+// ─── Gmail SMTP (local dev only) ───────────────────────────────────────────
+
+const gmailTransporter = EMAIL_PROVIDER === "smtp"
+  ? nodemailer.createTransport({ service: "gmail", auth: { user: EMAIL_USER, pass: EMAIL_PASS } })
+  : null;
+
+async function sendViaGmail(to, subject, text, html) {
+  await gmailTransporter.sendMail({
+    from: FROM_ADDRESS, to, subject, text,
     ...(html ? { html } : {}),
   });
+}
+
+// ─── SendGrid SMTP fallback ────────────────────────────────────────────────
+
+const sgTransporter = EMAIL_PROVIDER === "sendgrid"
+  ? nodemailer.createTransport({ host: "smtp.sendgrid.net", port: 587, secure: false, auth: { user: "apikey", pass: SENDGRID_API_KEY } })
+  : null;
+
+async function sendViaSendGrid(to, subject, text, html) {
+  await sgTransporter.sendMail({
+    from: FROM_ADDRESS, to, subject, text,
+    ...(html ? { html } : {}),
+  });
+}
+
+// ─── Public API ────────────────────────────────────────────────────────────
+
+const sendEmail = async (to, subject, text, html) => {
+  if (EMAIL_PROVIDER === "resend")   return sendViaResend(to, subject, text, html);
+  if (EMAIL_PROVIDER === "sendgrid") return sendViaSendGrid(to, subject, text, html);
+  return sendViaGmail(to, subject, text, html);
 };
 
 export default sendEmail;
