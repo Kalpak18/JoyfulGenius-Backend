@@ -318,7 +318,12 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
-// ------------------- HEALTH CHECK -------------------
+// ------------------- ROOT + HEALTH CHECK -------------------
+// Root route — prevents UptimeRobot / browsers hitting / from getting 404.
+app.get('/', (req, res) => {
+  res.json({ status: 'ok', service: 'JoyfulGenius API' });
+});
+
 // Lightweight liveness probe — used by Render/uptime monitors.
 app.get('/health', (req, res) => {
   res.json({
